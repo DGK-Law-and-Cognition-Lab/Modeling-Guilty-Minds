@@ -1,0 +1,1756 @@
+---
+title: "Modeling Guilty Minds: Omnibus Statistical Analysis"
+subtitle: "Lay Judgments of Mental State in Ambiguous Legal Scenarios"
+author: "David George Kamper, Andrew Bistras, Keith J. Holyoak, Jaime Castrellon"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: flatly
+    df_print: paged
+  pdf_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  fig.width = 8, fig.height = 5, fig.align = "center",
+  cache = FALSE
+)
+```
+
+# Setup
+
+## Package Installation and Loading
+
+We use `ordinal` for cumulative link mixed models (the central analytic workhorse),
+`lme4` and `lmerTest` for the linear mixed model in H4, `emmeans` for pairwise 
+comparisons, and standard tidyverse tools for data wrangling and visualization.
+
+```{r packages}
+# ── Install any missing packages ──
+required_packages <- c(
+  "tidyverse",    # data wrangling and plotting
+  "ordinal",      # cumulative link mixed models (CLMM)
+  "lme4",         # linear mixed models
+  "lmerTest",     # p-values for lmer via Satterthwaite
+  "emmeans",      # estimated marginal means and pairwise contrasts
+  "broom",        # tidy model summaries
+  "broom.mixed",  # tidy summaries for mixed models
+  "effectsize",   # standardized effect sizes
+  "pwr",          # power calculations
+  "knitr",        # tables
+  "kableExtra",   # nicer tables
+  "jsonlite",     # parse JSON strings (mpc_ranking column)
+  "cluster",      # k-means clustering
+  "factoextra",   # cluster visualization
+  "geomtextpath", # text labels along curves (Jaime's suggestion)
+  "pROC"          # ROC curves for threshold-specific models
+)
+
+for (pkg in required_packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg, repos = "https://cloud.r-project.org", quiet = TRUE)
+  }
+}
+
+library(tidyverse)
+library(ordinal)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(broom)
+library(broom.mixed)
+library(effectsize)
+library(pwr)
+library(knitr)
+library(kableExtra)
+library(jsonlite)
+library(cluster)
+library(factoextra)
+library(geomtextpath)
+library(pROC)
+# Note: MASS is installed but not loaded to avoid masking dplyr::select.
+# We call MASS::mvrnorm() directly where needed.
+
+# Seed for reproducibility in any bootstrapped or resampled procedures.
+set.seed(2026)
+```
+
+## Formatting Helpers
+
+A few small utility functions that get reused throughout.
+
+```{r helpers}
+# Convenience function: format p-values for inline reporting.
+fmt_p <- function(p) {
+  if (p < .001) return("< .001")
+  paste0("= ", sub("^0", "", formatC(p, format = "f", digits = 3)))
+}
+
+# Convenience function: format a number to n decimal places, no leading zero.
+fmt_num <- function(x, digits = 2) {
+  formatC(round(x, digits), format = "f", digits = digits)
+}
+
+# Design effect: adjusts effective sample size for within-subjects clustering.
+#   DEFF = 1 + (k - 1) * ICC
+#   where k = number of observations per cluster (here, 5 vignettes per person).
+compute_deff <- function(icc, k = 5) {
+  1 + (k - 1) * icc
+}
+
+# One-way ICC(1) from a simple ANOVA decomposition.
+# This gives the proportion of total variance attributable to between-cluster
+# (i.e., between-participant) differences.
+compute_icc <- function(outcome, cluster_id) {
+  fit <- aov(outcome ~ factor(cluster_id))
+  ms <- summary(fit)[[1]]["Mean Sq"]
+  ms_between <- ms[1, 1]
+  ms_within  <- ms[2, 1]
+  k <- mean(table(cluster_id))  # average cluster size
+  icc <- (ms_between - ms_within) / (ms_between + (k - 1) * ms_within)
+  max(icc, 0)  # floor at zero (negative ICC is not meaningful here)
+}
+
+# ── Color palette that degrades gracefully to grayscale ──
+# Online readers see distinct colors; print readers distinguish by linetype.
+# Colors chosen to be colorblind-safe (Wong palette) and remain separable
+# when desaturated to grayscale.
+judgment_colors <- c(
+  "Blamelessness" = "#0072B2",   # blue
+  "Negligence"    = "#D55E00",   # vermilion/orange
+  "Recklessness"  = "#009E73",   # teal/green
+  "Knowledge"     = "#CC79A7"    # pink/mauve
+)
+judgment_grays <- c(
+  "Blamelessness" = "grey75",
+  "Negligence"    = "grey50",
+  "Recklessness"  = "grey25",
+  "Knowledge"     = "black"
+)
+judgment_linetypes <- c(
+  "Blamelessness" = "dotted",
+  "Negligence"    = "dashed",
+  "Recklessness"  = "solid",
+  "Knowledge"     = "twodash"
+)
+
+# Helper: save both color and grayscale versions of a publication figure.
+save_dual <- function(fig_color, fig_bw, basename, width, height) {
+  ggsave(paste0(basename, ".pdf"), fig_color, width = width, height = height)
+  ggsave(paste0(basename, "_bw.pdf"), fig_bw, width = width, height = height)
+  cat("Saved:", paste0(basename, ".pdf"), "and", paste0(basename, "_bw.pdf"), "\n")
+}
+```
+
+
+# Data Loading and Cleaning
+
+```{r load-data}
+# ── Read the combined CSV ──
+# Each row is one trial: one participant × one vignette.
+# Participants each completed 5 vignettes, so the data is clustered.
+DATA_PATH <- "/Users/dgkamper/Library/CloudStorage/GoogleDrive-dgkamper@gmail.com/My Drive/DGK Lab/Reasoning Lab/DGK Lab - Mens Rea /Data/modeling_mental_states_analysis_part3.csv"
+raw <- read_csv(DATA_PATH, show_col_types = FALSE)
+
+# ── Normalize factor levels ──
+# The CoWork processing script introduced "$1,000 " (with comma and trailing
+# space) in place of the original "$1000". Standardise to the label the
+# ifelse() calls downstream expect.
+raw <- raw %>%
+  mutate(payment = case_when(
+    str_detect(payment, "1.?000") ~ "$1000",
+    TRUE ~ trimws(payment)
+  ))
+
+cat("Raw dataset:", nrow(raw), "rows,", n_distinct(raw$session_id), "unique session IDs\n")
+cat("Payment levels after normalisation:", paste(sort(unique(raw$payment)), collapse = ", "), "\n")
+```
+
+```{r exclusions}
+# ── Exclusion criteria ──
+# 1. Drop participants who did not complete all 5 vignettes.
+# 2. Drop duplicate session IDs if any exist.
+# These decisions are made blind to judgment content (per preregistration).
+
+completions <- raw %>%
+  group_by(session_id) %>%
+  summarise(n_trials = n(), .groups = "drop")
+
+# How many participants completed fewer than 5?
+incomplete <- completions %>% filter(n_trials < 5)
+cat("Participants with < 5 trials:", nrow(incomplete), "\n")
+if (nrow(incomplete) > 0) print(incomplete)
+
+# Keep only complete cases
+complete_ids <- completions %>% filter(n_trials == 5) %>% pull(session_id)
+d <- raw %>% filter(session_id %in% complete_ids)
+
+cat("\nPost-exclusion:", nrow(d), "trials from", n_distinct(d$session_id), "participants\n")
+```
+
+```{r derive-variables}
+# ── Derive analysis variables ──
+
+# Ordinal culpability score: maps the four MPC categories onto a numeric scale
+# that respects the legal hierarchy. This is the primary DV for the CLMMs.
+culp_map <- c("Blamelessness" = 1, "Negligence" = 2, 
+              "Recklessness" = 3, "Knowledge" = 4)
+d <- d %>%
+  mutate(
+    # Numeric culpability (1-4) and ordered factor version
+    culpability   = culp_map[judgment],
+    culpability_f = factor(culpability, levels = 1:4, ordered = TRUE),
+    
+    # Participant ID as a factor for random effects
+    pid = factor(session_id),
+    
+    # Binary vignette features: code each as 0/1 for regression.
+    # The "1" level is the theoretically more incriminating or salient option.
+    # This coding means positive coefficients indicate that the "1" level
+    # pushes judgments toward higher culpability.
+    source_bin   = ifelse(source == "biker", 1, 0),
+    package_bin  = ifelse(package == "duffel_bag", 1, 0),
+    inquiry_bin  = ifelse(inquiry == "source_tells", 1, 0),
+    payment_bin  = ifelse(payment == "$1000", 1, 0),
+    location_bin = ifelse(location == "Mexico", 1, 0),
+    contents_bin = ifelse(contents == "fentanyl", 1, 0),
+    
+    # Center the risk slider around its grand mean for easier interpretation
+    # of intercepts in the mixed models.
+    risk_c = slider_value - mean(slider_value, na.rm = TRUE),
+    
+    # Vignette presentation position (1-5), useful for order effects.
+    position = as.integer(vignette_position)
+  )
+
+# ── Parse MPC ranking data ──
+# The mpc_ranking column is a JSON array like ["Knowledge","Recklessness",...].
+# Each participant ranked the four definitions from most to least culpable.
+# We only need one row per participant for this, so we extract it separately.
+
+ranking_data <- d %>%
+  distinct(pid, mpc_ranking) %>%
+  filter(!is.na(mpc_ranking)) %>%
+  mutate(
+    ranking = map(mpc_ranking, ~ fromJSON(.x)),
+    # The correct MPC ordering (most to least culpable):
+    correct_order = list(c("Knowledge", "Recklessness", "Negligence", "Blamelessness")),
+    # Did they get the exact ordering right?
+    exact_match   = map2_lgl(ranking, correct_order, ~ identical(.x, .y)),
+    # Did they get the endpoints right? (Knowledge first, Blamelessness last)
+    endpoints_correct = map_lgl(ranking, ~ .x[1] == "Knowledge" & .x[4] == "Blamelessness")
+  )
+
+# ── Parse RPM data ──
+# Each participant answered 5 RPM items. rpm_correct is the total correct.
+rpm_data <- d %>%
+  distinct(pid, rpm_correct, rpm_total) %>%
+  filter(!is.na(rpm_correct)) %>%
+  mutate(rpm_prop = rpm_correct / rpm_total)
+
+# Merge RPM proportion back into the main dataset for use as a covariate.
+d <- d %>%
+  left_join(rpm_data %>% dplyr::select(pid, rpm_prop), by = "pid")
+
+cat("Analysis dataset ready.\n")
+cat("  Participants:", n_distinct(d$pid), "\n")
+cat("  Trials:", nrow(d), "\n")
+cat("  Judgments:", paste(names(table(d$judgment)), collapse = ", "), "\n")
+```
+
+
+# Descriptive Statistics
+
+Before running any models, we need to understand the basic structure of the data.
+
+## Judgment Distribution
+
+```{r judgment-distribution}
+# Marginal distribution of mental state judgments across all trials.
+judgment_counts <- d %>%
+  count(judgment) %>%
+  mutate(pct = n / sum(n) * 100) %>%
+  arrange(factor(judgment, levels = c("Blamelessness","Negligence","Recklessness","Knowledge")))
+
+judgment_counts %>%
+  kable(col.names = c("Mental State", "Count", "Percent"),
+        digits = 1, caption = "Distribution of mental state judgments") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r judgment-barplot, fig.height=4}
+# Visualize the judgment distribution with a horizontal bar chart.
+d %>%
+  mutate(judgment = factor(judgment, 
+    levels = c("Blamelessness","Negligence","Recklessness","Knowledge"))) %>%
+  ggplot(aes(x = judgment)) +
+  geom_bar(fill = "grey50", color = "black", linewidth = 0.3) +
+  geom_hline(yintercept = nrow(d) / 4, linetype = "dashed", color = "grey30") +
+  annotate("text", x = 0.6, y = nrow(d) / 4, label = "Uniform (25%)", 
+           hjust = 0, vjust = -0.5, size = 3, color = "grey30") +
+  labs(x = NULL, y = "Count") +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.x = element_blank())
+```
+
+## Risk Slider by Mental State
+
+```{r risk-by-judgment}
+# Descriptive statistics for the risk slider, broken down by judgment category.
+risk_summary <- d %>%
+  group_by(judgment) %>%
+  summarise(
+    n    = n(),
+    mean = mean(slider_value),
+    sd   = sd(slider_value),
+    se   = sd / sqrt(n),
+    .groups = "drop"
+  ) %>%
+  arrange(factor(judgment, levels = c("Blamelessness","Negligence","Recklessness","Knowledge")))
+
+risk_summary %>%
+  kable(digits = 2, caption = "Risk slider descriptives by mental state judgment") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r risk-violin, fig.height=5}
+# Violin + jitter plot showing the full distribution of risk ratings
+# within each judgment category.
+d %>%
+  mutate(judgment = factor(judgment,
+    levels = c("Blamelessness","Negligence","Recklessness","Knowledge"))) %>%
+  ggplot(aes(x = judgment, y = slider_value)) +
+  geom_violin(fill = "grey85", color = "grey40", alpha = 0.7) +
+  geom_jitter(width = 0.15, alpha = 0.15, size = 0.8) +
+  stat_summary(fun = mean, geom = "point", size = 3, color = "black") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.15, linewidth = 0.7) +
+  labs(x = NULL, y = "Risk Slider (0–100)") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 25)) +
+  theme_minimal(base_size = 13)
+```
+
+## Intraclass Correlations
+
+The ICC tells us how much of the variance in each outcome is due to stable
+between-person differences versus genuine trial-to-trial variation. This is
+essential for computing the design effect, which in turn determines how much
+the within-subjects clustering inflates our effective sample size.
+
+```{r icc}
+icc_slider <- compute_icc(d$slider_value, d$pid)
+icc_culp   <- compute_icc(d$culpability, d$pid)
+
+deff_slider <- compute_deff(icc_slider)
+deff_culp   <- compute_deff(icc_culp)
+
+tibble(
+  Measure = c("Risk Slider (0–100)", "Culpability Score (1–4)"),
+  ICC     = c(icc_slider, icc_culp),
+  `Design Effect` = c(deff_slider, deff_culp),
+  `Effective N (trials)` = round(nrow(d) / c(deff_slider, deff_culp))
+) %>%
+  kable(digits = 3, caption = "Intraclass correlations and design effects") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+## Demographics
+
+```{r demographics}
+# One row per participant for demographics.
+demo <- d %>%
+  distinct(pid, age, education, legal_experience) %>%
+  filter(!is.na(age))
+
+cat("Age: M =", round(mean(demo$age, na.rm = TRUE), 1), 
+    ", SD =", round(sd(demo$age, na.rm = TRUE), 1),
+    ", range =", min(demo$age, na.rm = TRUE), "-", max(demo$age, na.rm = TRUE), "\n")
+
+cat("\nEducation:\n")
+print(table(demo$education, useNA = "ifany"))
+
+cat("\nLegal experience:\n")
+print(table(demo$legal_experience, useNA = "ifany"))
+```
+
+
+# Hypothesis Tests
+
+## H1: Non-Uniform Distribution of Judgments
+
+If participants are merely guessing or treating the four categories as
+interchangeable, we would expect a uniform distribution (25% per category).
+H1 predicts systematic deviation from uniformity.
+
+```{r h1-chi-square}
+# ── Trial-level chi-square ──
+# This is the straightforward test on all trials, but it treats each trial
+# as an independent observation. With 5 trials per person and non-trivial
+# ICC, the effective sample size is smaller than the raw trial count.
+
+observed <- table(d$judgment)
+n_trials <- sum(observed)
+expected <- rep(n_trials / 4, 4)
+
+chi_test <- chisq.test(observed, p = rep(0.25, 4))
+
+# Cohen's w: effect size for the chi-square goodness-of-fit test.
+# w = sqrt(chi2 / N), but we need to use the DEFF-adjusted N for
+# a fair comparison.
+cohens_w <- sqrt(chi_test$statistic / n_trials)
+
+# DEFF-adjusted chi-square: the test statistic scales linearly with N,
+# so dividing by the design effect gives the corrected statistic.
+chi_adj <- chi_test$statistic / deff_culp
+p_adj   <- pchisq(chi_adj, df = 3, lower.tail = FALSE)
+
+cat("── H1: Chi-square goodness-of-fit ──\n")
+cat("Observed: ", paste(names(observed), "=", observed, collapse = ", "), "\n")
+cat("Expected (uniform): ", round(expected[1]), "each\n\n")
+cat("Uncorrected:  χ²(3) =", round(chi_test$statistic, 2), 
+    ", p", fmt_p(chi_test$p.value), "\n")
+cat("DEFF-adjusted: χ²(3) =", round(chi_adj, 2),
+    ", p", fmt_p(p_adj), "\n")
+cat("Cohen's w =", fmt_num(cohens_w, 3), "\n")
+```
+
+```{r h1-follow-up}
+# ── Follow-up: pairwise comparisons ──
+# Which categories are over- or under-represented relative to 25%?
+# We use one-sample proportion tests with Holm correction.
+
+categories <- c("Blamelessness", "Negligence", "Recklessness", "Knowledge")
+pairwise_h1 <- map_dfr(categories, function(cat) {
+  k   <- sum(d$judgment == cat)
+  n   <- nrow(d)
+  tst <- prop.test(k, n, p = 0.25)
+  tibble(
+    Category     = cat,
+    Observed_Pct = k / n * 100,
+    Expected_Pct = 25,
+    Chi2         = tst$statistic,
+    p_uncorrected = tst$p.value
+  )
+}) %>%
+  mutate(p_holm = p.adjust(p_uncorrected, method = "holm"))
+
+pairwise_h1 %>%
+  kable(digits = c(0, 1, 0, 2, 4, 4),
+        caption = "H1 follow-up: each category vs. 25% uniform baseline") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Interpretation.** Even after correcting for within-subjects clustering via the
+design effect, the chi-square test is highly significant, confirming that 
+participants do not distribute their judgments uniformly. Negligence is
+overselected and Knowledge is underselected relative to the uniform baseline.
+Recklessness is the only category not significantly different from 25%.
+
+
+## H2: Risk Magnitude Predicts Culpability
+
+This is the core prediction of the MPC framework: if participants are sensitive
+to the legally relevant distinction between mental states, then higher perceived 
+risk should map onto higher culpability judgments.
+
+### Spearman Correlation
+
+```{r h2-spearman}
+# ── Spearman rank correlation ──
+# This is a nonparametric test of the monotonic association between the
+# continuous risk slider (0–100) and the ordinal culpability score (1–4).
+# Note: this is computed at the trial level and does not account for
+# clustering. We report the DEFF-adjusted effective N for context.
+
+rho_test <- cor.test(d$slider_value, d$culpability, method = "spearman",
+                     exact = FALSE)
+
+cat("── H2: Spearman correlation ──\n")
+cat("ρ =", fmt_num(rho_test$estimate, 3), "\n")
+cat("S =", round(rho_test$statistic), ", p", fmt_p(rho_test$p.value), "\n")
+cat("(Trial-level; effective N after DEFF correction ≈", 
+    round(nrow(d) / deff_slider), ")\n")
+```
+
+### Cumulative Link Mixed Model: Risk Only
+
+The CLMM is the primary parametric test for H2. It models the ordinal
+culpability score (1 = Blamelessness through 4 = Knowledge) as a function
+of the continuous risk slider, with a random intercept for each participant
+to account for the repeated-measures structure. The CLMM extends standard
+ordinal logistic regression (proportional odds model) by incorporating
+random effects that account for the non-independence of observations within
+participants. A standard ordinal regression would treat all 1,060 trials as
+independent, ignoring the clustering of 5 trials per person and inflating
+Type I error rates. The CLMM handles this by estimating participant-specific
+intercepts, yielding correctly calibrated standard errors and valid inference
+despite the within-subjects design.
+
+The cumulative link model assumes proportional odds: the effect of risk on
+the log-odds of being in a higher culpability category is constant across
+the three threshold transitions (1→2, 2→3, 3→4). This is tested later
+in the diagnostics section.
+
+```{r h2-clmm}
+# ── Fit the risk-only CLMM ──
+m_risk <- clmm(culpability_f ~ slider_value + (1 | pid), data = d)
+
+cat("── H2: Cumulative Link Mixed Model (risk only) ──\n")
+summary(m_risk)
+```
+
+```{r h2-clmm-interpretation}
+# Extract and interpret the risk coefficient.
+coef_risk <- summary(m_risk)$coefficients
+risk_row  <- coef_risk["slider_value", ]
+
+# The raw coefficient is in log-odds per unit change in slider_value.
+# Since slider_value ranges 0–100, a one-unit change is small. We also
+# compute the standardized coefficient (log-odds per 1 SD of slider).
+risk_b   <- risk_row["Estimate"]
+risk_se  <- risk_row["Std. Error"]
+risk_z   <- risk_row["z value"]
+risk_p   <- risk_row["Pr(>|z|)"]
+risk_b_std <- risk_b * sd(d$slider_value)
+
+cat("Risk coefficient: b =", fmt_num(risk_b, 4), 
+    ", SE =", fmt_num(risk_se, 4),
+    ", z =", fmt_num(risk_z, 2),
+    ", p", fmt_p(risk_p), "\n")
+cat("Standardized: β =", fmt_num(risk_b_std, 3),
+    "(log-odds per 1 SD of slider)\n")
+cat("Odds ratio per 10-point slider increase:", 
+    fmt_num(exp(risk_b * 10), 3), "\n")
+```
+
+### Predicted Probability Curves
+
+These curves show how the predicted probability of each mental state category
+changes as a function of the risk slider, holding random effects at zero
+(i.e., for an "average" participant). We include 95% parametric bootstrap
+confidence bands computed from the variance-covariance matrix of the CLMM
+estimates.
+
+```{r predicted-probabilities, fig.height=5}
+# ── Compute predicted probabilities from the CLMM ──
+# The cumulative link model gives us thresholds (α_j) and a slope (β).
+# P(Y ≤ j | x) = logistic(α_j - β * x)
+# P(Y = j | x) = P(Y ≤ j) - P(Y ≤ j-1)
+
+thresholds <- m_risk$Theta           # three threshold parameters
+beta       <- coef(m_risk)["slider_value"]
+
+slider_seq <- seq(0, 100, by = 1)
+
+# ── Point estimates ──
+pred_probs <- map_dfr(slider_seq, function(x) {
+  cum_probs <- plogis(thresholds - beta * x)
+  probs <- c(cum_probs[1],
+             cum_probs[2] - cum_probs[1],
+             cum_probs[3] - cum_probs[2],
+             1 - cum_probs[3])
+  tibble(
+    slider = x,
+    Blamelessness = probs[1],
+    Negligence    = probs[2],
+    Recklessness  = probs[3],
+    Knowledge     = probs[4]
+  )
+}) %>%
+  pivot_longer(-slider, names_to = "judgment", values_to = "probability") %>%
+  mutate(judgment = factor(judgment,
+    levels = c("Blamelessness","Negligence","Recklessness","Knowledge")))
+
+# ── Parametric bootstrap confidence bands ──
+# We draw from the multivariate normal distribution of the estimated
+# parameters (thresholds + slope) using the model's variance-covariance
+# matrix, then compute predicted probabilities under each draw. The 2.5th
+# and 97.5th percentiles across draws give 95% confidence bands.
+
+n_boot <- 1000
+
+# The vcov() method for clmm returns only the fixed-effect vcov (1×1 here).
+# The Hessian includes ALL parameters: thresholds, fixed effects, AND the
+# random effect variance. We need the joint vcov of just the thresholds
+# and fixed effects (first 4 parameters), marginalizing over the random
+# effect variance.
+param_est <- c(m_risk$Theta, coef(m_risk)["slider_value"])
+n_params  <- length(param_est)  # should be 4
+
+# Invert the full Hessian, then extract the submatrix for our 4 parameters.
+full_vcov <- solve(m_risk$Hessian)
+# The Hessian row/col order is: thresholds, fixed effects, random effects.
+# We take only the first n_params rows and columns.
+vcov_sub <- full_vcov[1:n_params, 1:n_params]
+
+# Draw parameter samples from the joint multivariate normal.
+boot_params <- MASS::mvrnorm(n_boot, mu = param_est, Sigma = vcov_sub)
+
+# For each draw, compute predicted probabilities at each slider value.
+boot_probs <- array(NA, dim = c(n_boot, length(slider_seq), 4))
+for (b in 1:n_boot) {
+  th_b   <- boot_params[b, 1:3]
+  beta_b <- boot_params[b, 4]
+  for (i in seq_along(slider_seq)) {
+    x <- slider_seq[i]
+    cum_b <- plogis(th_b - beta_b * x)
+    boot_probs[b, i, ] <- c(cum_b[1],
+                              cum_b[2] - cum_b[1],
+                              cum_b[3] - cum_b[2],
+                              1 - cum_b[3])
+  }
+}
+
+# Extract 2.5% and 97.5% quantiles for each category × slider value.
+ci_data <- map_dfr(1:4, function(j) {
+  lo <- apply(boot_probs[, , j], 2, quantile, probs = 0.025)
+  hi <- apply(boot_probs[, , j], 2, quantile, probs = 0.975)
+  tibble(
+    slider  = slider_seq,
+    ci_lo   = lo,
+    ci_hi   = hi,
+    judgment = c("Blamelessness","Negligence","Recklessness","Knowledge")[j]
+  )
+}) %>%
+  mutate(judgment = factor(judgment,
+    levels = c("Blamelessness","Negligence","Recklessness","Knowledge")))
+
+# Merge point estimates with CIs.
+pred_with_ci <- pred_probs %>%
+  left_join(ci_data, by = c("slider", "judgment"))
+
+ggplot(pred_with_ci, aes(x = slider, y = probability, 
+                         color = judgment, linetype = judgment)) +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi, fill = judgment, group = judgment),
+              alpha = 0.15, color = NA) +
+  geom_line(linewidth = 0.9) +
+  scale_color_manual(values = judgment_colors) +
+  scale_fill_manual(values = judgment_colors) +
+  scale_linetype_manual(values = judgment_linetypes) +
+  labs(x = "Risk Slider (0–100)",
+       y = "Predicted Probability",
+       color = "Mental State", linetype = "Mental State") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_x_continuous(breaks = seq(0, 100, 25)) +
+  guides(fill = "none") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```
+
+
+## H3: Extralegal Feature Bias
+
+H3 tests whether vignette surface features influence culpability judgments
+even after controlling for perceived risk. The CLMM from H2 is extended
+to include all six binary vignette features as fixed effects.
+
+### Full CLMM: Risk + Features
+
+```{r h3-clmm-features}
+# ── Fit the full model: risk + all six features ──
+# The features are coded 0/1 with the more incriminating level as 1:
+#   source_bin:   biker = 1 (vs. uncle)
+#   package_bin:  duffel_bag = 1 (vs. gift-wrapped)
+#   inquiry_bin:  source_tells = 1 (vs. defendant asks)
+#   payment_bin:  $1000 = 1 (vs. none)
+#   location_bin: Mexico = 1 (vs. Canada)
+#   contents_bin: fentanyl = 1 (vs. rare disease drugs)
+
+m_full <- clmm(
+  culpability_f ~ slider_value + source_bin + package_bin + inquiry_bin +
+                  payment_bin + location_bin + contents_bin + (1 | pid),
+  data = d
+)
+
+cat("── H3: Full CLMM (risk + features) ──\n")
+summary(m_full)
+```
+
+```{r h3-feature-table}
+# ── Extract feature coefficients ──
+coefs <- summary(m_full)$coefficients
+
+# We only want the predictor coefficients, not the thresholds.
+predictor_names <- c("slider_value", "source_bin", "package_bin", 
+                     "inquiry_bin", "payment_bin", "location_bin", "contents_bin")
+
+# Sanity check: verify all expected predictors appear in the model output.
+missing <- setdiff(predictor_names, rownames(coefs))
+if (length(missing) > 0) {
+  cat("WARNING: the following predictors are missing from the model output:\n")
+  cat(" ", paste(missing, collapse = ", "), "\n")
+  cat("Available coefficient names:", paste(rownames(coefs), collapse = ", "), "\n")
+  cat("This usually means a predictor became constant (all 0 or all 1).\n")
+  cat("Check factor levels in the data before proceeding.\n\n")
+  # Fall back to whatever predictors DO exist so the document can still knit.
+  predictor_names <- intersect(predictor_names, rownames(coefs))
+}
+
+feature_table <- as_tibble(coefs[predictor_names, ], rownames = "Predictor") %>%
+  rename(b = Estimate, SE = `Std. Error`, z = `z value`, p = `Pr(>|z|)`) %>%
+  mutate(
+    OR = exp(b),
+    # Convert log-odds coefficient to approximate Cohen's d using the
+    # logistic distribution variance (pi^2/3). For binary predictors,
+    # d ≈ b * sqrt(3) / pi.
+    d_approx = ifelse(Predictor != "slider_value", b * sqrt(3) / pi, NA)
+  )
+
+# ── Holm correction: applied only to the 6 features, not to risk ──
+# Risk is tested under H2; the features are a separate family for H3.
+feature_only <- feature_table %>% filter(Predictor != "slider_value")
+feature_only$p_holm <- p.adjust(feature_only$p, method = "holm")
+feature_only <- feature_only %>%
+  mutate(Sig = case_when(
+    p_holm < .001  ~ "***",
+    p_holm < .01   ~ "**",
+    p_holm < .05   ~ "*",
+    p      < .05   ~ "†",    # uncorrected significant, Holm-corrected not
+    TRUE           ~ ""
+  ))
+
+risk_only_row <- feature_table %>% 
+  filter(Predictor == "slider_value") %>%
+  mutate(
+    p_holm = NA_real_,
+    Sig = case_when(p < .001 ~ "***", p < .01 ~ "**", p < .05 ~ "*", TRUE ~ "")
+  )
+
+feature_table <- bind_rows(risk_only_row, feature_only)
+
+# Readable labels
+feature_table <- feature_table %>%
+  mutate(Predictor = recode(Predictor,
+    "slider_value" = "Risk Slider",
+    "source_bin"   = "Source (biker)",
+    "package_bin"  = "Package (duffel bag)",
+    "inquiry_bin"  = "Inquiry (source tells)",
+    "payment_bin"  = "Payment ($1000)",
+    "location_bin" = "Location (Mexico)",
+    "contents_bin" = "Contents (fentanyl)"
+  ))
+
+feature_table %>%
+  dplyr::select(Predictor, b, SE, z, p, OR, d_approx, p_holm, Sig) %>%
+  kable(digits = c(0, 3, 3, 2, 4, 3, 3, 4, 0),
+        col.names = c("Predictor", "b", "SE", "z", "p", "OR", "d (approx)", 
+                       "p (Holm)", ""),
+        caption = "H3: Full CLMM coefficients († = uncorrected p < .05 only)") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Feature interpretation.** Payment ($1000 vs. none) is the only feature
+that survives Holm correction, with an odds ratio of 1.70 and an approximate
+Cohen's d in the small-to-medium range. Source (biker vs. uncle) shows a
+marginal trend at the uncorrected level that does not survive multiple
+comparison correction even with the full sample of 212 participants and
+1,060 trials. The remaining four features (package type, inquiry direction,
+location, and contents) show no meaningful effects, confirming that
+participants' mental state attributions are driven primarily by perceived risk
+and financial motive rather than by geographic stereotypes, outcome severity,
+or other surface features of the scenario.
+
+### Forest Plot of Feature Effects
+
+```{r forest-plot, fig.height=5}
+# ── Forest plot: feature coefficients with 95% CIs ──
+forest_data <- feature_table %>%
+  filter(Predictor != "Risk Slider") %>%
+  mutate(
+    ci_lo = b - 1.96 * SE,
+    ci_hi = b + 1.96 * SE,
+    Predictor = factor(Predictor, levels = rev(Predictor))
+  )
+
+ggplot(forest_data, aes(x = b, y = Predictor)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.2, linewidth = 0.6) +
+  geom_point(size = 2.5) +
+  labs(x = "Log-Odds Coefficient (95% CI)", y = NULL) +
+  theme_minimal(base_size = 13)
+```
+
+### Model Comparison
+
+```{r model-comparison}
+# ── Compare nested models ──
+# Model 1: risk only (H2)
+# Model 2: risk + features (H3)
+# The likelihood ratio test tells us whether the features as a group
+# add significantly to the model beyond risk alone.
+
+lr_test <- anova(m_risk, m_full)
+cat("── Model comparison: risk-only vs. risk + features ──\n")
+print(lr_test)
+```
+
+### Random Slopes Model
+
+We also fit a model that allows the risk slope to vary across participants.
+This is more theoretically complete (different people may weight risk
+differently), but with only 5 observations per person it may struggle
+to converge.
+
+```{r random-slopes}
+# ── Try random slopes for risk ──
+# If this doesn't converge, we fall back to random-intercepts-only.
+m_full_slopes <- tryCatch({
+  clmm(
+    culpability_f ~ slider_value + source_bin + package_bin + inquiry_bin +
+                    payment_bin + location_bin + contents_bin +
+                    (1 + slider_value | pid),
+    data = d
+  )
+}, warning = function(w) {
+  cat("Warning during random-slopes fit:", conditionMessage(w), "\n")
+  suppressWarnings(
+    clmm(
+      culpability_f ~ slider_value + source_bin + package_bin + inquiry_bin +
+                      payment_bin + location_bin + contents_bin +
+                      (1 + slider_value | pid),
+      data = d
+    )
+  )
+}, error = function(e) {
+  cat("Random slopes model failed to converge:", conditionMessage(e), "\n")
+  cat("Falling back to random-intercepts-only model.\n")
+  NULL
+})
+
+if (!is.null(m_full_slopes)) {
+  # ── Check convergence ──
+  # The ordinal package stores convergence info in varying field names
+  # depending on version. We check several possibilities.
+  cat("── Random slopes model ──\n")
+  
+  max_grad <- m_full_slopes$maxGradient
+  if (!is.numeric(max_grad)) max_grad <- m_full_slopes$info$max.grad
+  if (!is.numeric(max_grad)) {
+    # Print whatever convergence info we can find
+    cat("Convergence info from model:\n")
+    str(m_full_slopes$convergence)
+    cat("\n")
+  } else {
+    cat("Max |gradient|:", fmt_num(max_grad, 6), "\n")
+    cat("Gradient acceptable (< 1e-03):", max_grad < 1e-03, "\n")
+  }
+  cat("\n")
+  
+  # ── Compare with random-intercepts-only ──
+  lr_slopes <- anova(m_full, m_full_slopes)
+  print(lr_slopes)
+  
+  # ── Random effects variance components ──
+  cat("\nRandom effects:\n")
+  vc <- VarCorr(m_full_slopes)
+  print(vc)
+  
+  # ── Interpret the intercept-slope correlation ──
+  # A strong negative correlation means that participants who start with
+  # higher baseline culpability (harsher judges) show flatter risk slopes:
+  # they are less sensitive to variation in perceived risk. Conversely,
+  # participants with low baselines (more lenient) show steeper slopes,
+  # meaning they differentiate more sharply by risk.
+  rs_corr <- tryCatch({
+    attr(vc$pid, "correlation")[1, 2]
+  }, error = function(e) {
+    # If the structure is different, try the correlation matrix directly
+    tryCatch(vc$pid[1, 2] / sqrt(vc$pid[1, 1] * vc$pid[2, 2]),
+             error = function(e2) NA_real_)
+  })
+  
+  if (!is.na(rs_corr)) {
+    cat("\nIntercept–slope correlation:", fmt_num(rs_corr, 3), "\n")
+    if (abs(rs_corr) > 0.85) {
+      cat("NOTE: This correlation is very high (|r| > .85), which raises\n")
+      cat("concerns about overparameterization. With only 5 observations per\n")
+      cat("participant, the random slopes structure may not be estimable with\n")
+      cat("precision. The significant LRT improvement indicates meaningfully\n")
+      cat("better fit, but the specific variance component estimates should\n")
+      cat("be interpreted cautiously. The substantive implication — that\n")
+      cat("harsher judges are less risk-sensitive — is a plausible individual\n")
+      cat("difference pattern, but the extreme correlation value (|r| > .85)\n")
+      cat("suggests the model is likely overparameterized given the limited\n")
+      cat("within-person observations. The random-intercepts-only model should\n")
+      cat("be preferred for inference on the fixed effects.\n")
+    }
+  }
+} else {
+  cat("Random slopes model did not converge. Using random-intercepts-only.\n")
+}
+```
+
+
+## H4: Risk Distinguishes Recklessness from Knowledge (Exploratory)
+
+Among trials classified as Recklessness or Knowledge, does the risk slider
+distinguish between them? Under the MPC, Knowledge requires near-certainty
+of the outcome, while Recklessness requires only awareness of a substantial
+risk. If participants draw this distinction, Knowledge trials should have
+higher risk ratings.
+
+```{r h4-rk-lmm}
+# ── Subset to R and K trials ──
+d_rk <- d %>%
+  filter(judgment %in% c("Recklessness", "Knowledge")) %>%
+  mutate(is_knowledge = ifelse(judgment == "Knowledge", 1, 0))
+
+cat("── H4: R vs. K ──\n")
+cat("Recklessness trials:", sum(d_rk$is_knowledge == 0), "\n")
+cat("Knowledge trials:", sum(d_rk$is_knowledge == 1), "\n\n")
+
+# ── Descriptive comparison ──
+rk_desc <- d_rk %>%
+  group_by(judgment) %>%
+  summarise(
+    n    = n(),
+    mean = mean(slider_value),
+    sd   = sd(slider_value),
+    se   = sd / sqrt(n),
+    .groups = "drop"
+  )
+print(rk_desc)
+
+# ── Linear mixed model ──
+# risk ~ is_knowledge + (1 | pid)
+# This accounts for the fact that the same participant can contribute
+# both R and K trials (for different vignettes).
+m_rk <- lmer(slider_value ~ is_knowledge + (1 | pid), data = d_rk)
+
+cat("\n── LMM: slider_value ~ is_knowledge + (1 | pid) ──\n")
+summary(m_rk)
+
+# Effect size: Cohen's d from the LMM coefficient
+rk_coef <- summary(m_rk)$coefficients["is_knowledge", ]
+pooled_sd <- sd(d_rk$slider_value)
+cohens_d_rk <- rk_coef["Estimate"] / pooled_sd
+
+cat("\nCohen's d =", fmt_num(cohens_d_rk, 3), "\n")
+cat("Direction:", ifelse(rk_coef["Estimate"] > 0, 
+    "Knowledge > Recklessness (expected)", 
+    "Knowledge < Recklessness (REVERSED)"), "\n")
+
+# ── Two-tailed and one-tailed tests ──
+# We preregistered a one-tailed test (Knowledge > Recklessness), but given
+# the reversed direction, both tests are reported for transparency.
+t_val <- rk_coef["t value"]
+df_val <- summary(m_rk)$coefficients["is_knowledge", "df"]
+p_two_tailed <- 2 * pt(abs(t_val), df = df_val, lower.tail = FALSE)
+p_one_tailed <- pt(t_val, df = df_val, lower.tail = FALSE)
+
+cat("Two-tailed p", fmt_p(p_two_tailed), "\n")
+cat("One-tailed p (preregistered: K > R)", fmt_p(p_one_tailed), "\n")
+```
+
+**Interpretation.** The effect is significantly reversed: participants assigned
+*lower* risk ratings to trials they classified as Knowledge than to those
+classified as Recklessness. This reversal is consistent with the proportional
+odds violation documented in the diagnostics section below, where the risk
+coefficient at the Knowledge threshold is substantially attenuated relative to
+lower thresholds. Together, these findings indicate that participants' use of
+the Knowledge category is not primarily driven by high perceived risk. Rather,
+Knowledge judgments appear to be triggered by qualitative features of the
+vignettes (most notably payment) or by a categorical inference about the
+defendant's state of mind that is not captured by the continuous risk slider.
+With 286 Recklessness and 145 Knowledge trials, this reversal is robust and
+unlikely to be an artifact of insufficient power.
+
+
+# Secondary and Exploratory Analyses
+
+## MPC Ranking Accuracy
+
+After the five vignette trials, participants ranked the four mental state
+definitions from most to least culpable. We test whether they can recover
+the correct MPC ordering when the definitions are presented side by side.
+
+```{r mpc-ranking}
+cat("── MPC Ranking Accuracy ──\n")
+cat("Participants with ranking data:", nrow(ranking_data), "\n")
+cat("Exact correct (K > R > N > B):", sum(ranking_data$exact_match),
+    "(", round(mean(ranking_data$exact_match) * 100, 1), "%)\n")
+cat("Endpoints correct (K first, B last):", sum(ranking_data$endpoints_correct),
+    "(", round(mean(ranking_data$endpoints_correct) * 100, 1), "%)\n")
+
+# ── Binomial test against chance ──
+# With 4 items, there are 4! = 24 possible orderings. Chance = 1/24 ≈ 4.17%.
+n_correct <- sum(ranking_data$exact_match)
+n_total   <- nrow(ranking_data)
+binom_test <- binom.test(n_correct, n_total, p = 1/24, alternative = "greater")
+
+cat("\nBinomial test (exact match vs. chance = 4.17%):\n")
+cat("  Observed:", n_correct, "/", n_total, 
+    "(", round(n_correct / n_total * 100, 1), "%)\n")
+cat("  p", fmt_p(binom_test$p.value), "\n")
+cat("  95% CI:", round(binom_test$conf.int[1] * 100, 1), "% –",
+    round(binom_test$conf.int[2] * 100, 1), "%\n")
+
+# ── Endpoints binomial test ──
+# Chance of getting both endpoints right by chance:
+# P(K first) = 1/4, P(B last | K first) = 1/3, so P(both) = 1/12 ≈ 8.33%.
+n_endpoints <- sum(ranking_data$endpoints_correct)
+binom_endpoints <- binom.test(n_endpoints, n_total, p = 1/12, alternative = "greater")
+
+cat("\nEndpoints test (K first & B last vs. chance = 8.33%):\n")
+cat("  Observed:", n_endpoints, "/", n_total,
+    "(", round(n_endpoints / n_total * 100, 1), "%)\n")
+cat("  p", fmt_p(binom_endpoints$p.value), "\n")
+```
+
+```{r kendall-tau}
+# ── Kendall's tau for each participant ──
+# This gives a continuous measure of how close each participant's ranking
+# is to the correct ordering, rather than the all-or-nothing exact match.
+
+correct_numeric <- c("Knowledge" = 1, "Recklessness" = 2, 
+                     "Negligence" = 3, "Blamelessness" = 4)
+
+ranking_data <- ranking_data %>%
+  mutate(
+    participant_numeric = map(ranking, ~ correct_numeric[.x]),
+    tau = map_dbl(participant_numeric, ~ cor(.x, 1:4, method = "kendall"))
+  )
+
+cat("── Kendall's τ ──\n")
+cat("Mean τ:", fmt_num(mean(ranking_data$tau), 3), "\n")
+cat("SD τ:", fmt_num(sd(ranking_data$tau), 3), "\n")
+
+# Test whether the mean tau is significantly above zero (random ranking).
+tau_test <- t.test(ranking_data$tau, mu = 0, alternative = "greater")
+cat("One-sample t-test (H0: τ = 0):\n")
+cat("  t(", tau_test$parameter, ") =", fmt_num(tau_test$statistic, 2),
+    ", p", fmt_p(tau_test$p.value), "\n")
+```
+
+
+## RPM and Cognitive Ability Moderation
+
+Does cognitive ability (proxied by Raven's Progressive Matrices performance)
+moderate the relationship between risk perception and culpability judgment?
+
+```{r rpm-descriptives}
+cat("── RPM Descriptives ──\n")
+cat("Mean correct:", fmt_num(mean(rpm_data$rpm_correct, na.rm = TRUE), 2),
+    "out of", rpm_data$rpm_total[1], "\n")
+cat("SD:", fmt_num(sd(rpm_data$rpm_correct, na.rm = TRUE), 2), "\n")
+cat("Range:", min(rpm_data$rpm_correct, na.rm = TRUE), "–", 
+    max(rpm_data$rpm_correct, na.rm = TRUE), "\n")
+```
+
+```{r rpm-moderation}
+# ── CLMM with RPM interaction ──
+# risk * rpm_prop tests whether the risk–culpability slope is steeper
+# for participants with higher cognitive ability.
+
+# Center RPM for interpretability
+d <- d %>%
+  mutate(rpm_c = rpm_prop - mean(rpm_prop, na.rm = TRUE))
+
+m_rpm <- clmm(
+  culpability_f ~ slider_value * rpm_c + source_bin + package_bin +
+                  inquiry_bin + payment_bin + location_bin + contents_bin +
+                  (1 | pid),
+  data = d %>% filter(!is.na(rpm_c))
+)
+
+cat("── RPM × Risk Interaction ──\n")
+summary(m_rpm)
+
+# Test the interaction term specifically.
+rpm_coefs <- summary(m_rpm)$coefficients
+if ("slider_value:rpm_c" %in% rownames(rpm_coefs)) {
+  interaction_row <- rpm_coefs["slider_value:rpm_c", ]
+  cat("\nInteraction (slider × RPM):\n")
+  cat("  b =", fmt_num(interaction_row["Estimate"], 4),
+      ", z =", fmt_num(interaction_row["z value"], 2),
+      ", p", fmt_p(interaction_row["Pr(>|z|)"]), "\n")
+  if (abs(interaction_row["Pr(>|z|)"]) > .05) {
+    cat("  Interpretation: The interaction is not significant, indicating\n")
+    cat("  that cognitive ability (RPM) does not moderate the relationship\n")
+    cat("  between risk perception and culpability judgment.\n")
+  } else if (interaction_row["Estimate"] > 0) {
+    cat("  Interpretation: The positive interaction means higher-RPM participants\n")
+    cat("  show a steeper risk–culpability slope — they differentiate more\n")
+    cat("  sharply between mental states on the basis of perceived risk.\n")
+  } else {
+    cat("  Interpretation: The negative interaction means higher-RPM participants\n")
+    cat("  show a shallower risk–culpability slope — they differentiate less\n")
+    cat("  sharply between mental states on the basis of perceived risk.\n")
+  }
+} else {
+  cat("\nWARNING: slider_value:rpm_c interaction not found in model output.\n")
+  cat("Available terms:", paste(rownames(rpm_coefs), collapse = ", "), "\n")
+}
+```
+
+```{r rpm-ranking-correlation}
+# ── Does RPM predict ranking accuracy? ──
+ranking_rpm <- ranking_data %>%
+  left_join(rpm_data, by = "pid") %>%
+  filter(!is.na(rpm_prop))
+
+# Point-biserial correlation: RPM proportion correct × exact match
+if (sum(ranking_rpm$exact_match) > 2) {
+  rpm_rank_cor <- cor.test(ranking_rpm$rpm_prop, 
+                           as.numeric(ranking_rpm$exact_match))
+  cat("RPM × exact ranking match: r =", fmt_num(rpm_rank_cor$estimate, 3),
+      ", p", fmt_p(rpm_rank_cor$p.value), "\n")
+}
+
+# Correlation with Kendall's tau (continuous ranking quality)
+rpm_tau_cor <- cor.test(ranking_rpm$rpm_prop, ranking_rpm$tau)
+cat("RPM × Kendall's τ: r =", fmt_num(rpm_tau_cor$estimate, 3),
+    ", p", fmt_p(rpm_tau_cor$p.value), "\n")
+```
+
+
+## Individual Differences Clustering
+
+We look for participant-level profiles that might reveal distinct "types"
+of judgment strategy (e.g., consistently harsh, consistently lenient,
+risk-calibrated, or random-looking).
+
+```{r clustering-profiles}
+# ── Build participant-level feature vectors ──
+participant_profiles <- d %>%
+  group_by(pid) %>%
+  summarise(
+    # Judgment distribution: proportion of trials in each category
+    pct_B = mean(judgment == "Blamelessness"),
+    pct_N = mean(judgment == "Negligence"),
+    pct_R = mean(judgment == "Recklessness"),
+    pct_K = mean(judgment == "Knowledge"),
+    # Mean and SD of risk slider
+    mean_risk = mean(slider_value),
+    sd_risk   = sd(slider_value),
+    # Within-person risk-culpability correlation
+    rho_risk_culp = cor(slider_value, culpability, method = "spearman"),
+    .groups = "drop"
+  ) %>%
+  left_join(ranking_data %>% dplyr::select(pid, tau, exact_match), by = "pid") %>%
+  left_join(rpm_data %>% dplyr::select(pid, rpm_prop), by = "pid") %>%
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0)))
+
+# ── K-means clustering ──
+# We use the judgment proportions + mean risk + rho as the clustering features.
+# RPM and tau are held out as validation variables.
+cluster_vars <- participant_profiles %>%
+  dplyr::select(pct_B, pct_N, pct_R, pct_K, mean_risk, rho_risk_culp) %>%
+  scale()
+
+# Determine optimal k using the silhouette method.
+sil_results <- map_dbl(2:6, function(k) {
+  km <- kmeans(cluster_vars, centers = k, nstart = 25, iter.max = 100)
+  mean(silhouette(km$cluster, dist(cluster_vars))[, "sil_width"])
+})
+
+optimal_k <- which.max(sil_results) + 1  # +1 because we started at k=2
+cat("Silhouette widths for k = 2 through 6:", round(sil_results, 3), "\n")
+cat("Optimal k:", optimal_k, "\n")
+```
+
+```{r clustering-fit, fig.height=5}
+# ── Fit the chosen k-means model ──
+km_fit <- kmeans(cluster_vars, centers = optimal_k, nstart = 25, iter.max = 100)
+participant_profiles$cluster <- factor(km_fit$cluster)
+
+# ── Cluster summary ──
+cluster_summary <- participant_profiles %>%
+  group_by(cluster) %>%
+  summarise(
+    n = n(),
+    mean_B = mean(pct_B), mean_N = mean(pct_N),
+    mean_R = mean(pct_R), mean_K = mean(pct_K),
+    mean_risk = mean(mean_risk),
+    mean_rho  = mean(rho_risk_culp),
+    mean_tau  = mean(tau, na.rm = TRUE),
+    mean_rpm  = mean(rpm_prop, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cluster_summary %>%
+  kable(digits = 2, caption = paste("K-means cluster profiles (k =", optimal_k, ")")) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r cluster-viz, fig.height=5}
+# ── PCA-based visualization of clusters ──
+fviz_cluster(km_fit, data = cluster_vars, 
+             geom = "point", ellipse = TRUE, 
+             ellipse.type = "convex",
+             palette = "grey",
+             ggtheme = theme_minimal(base_size = 13))
+```
+
+
+## Risk Magnitude Mediation (Exploratory)
+
+Does risk magnitude mediate the effect of vignette features on culpability?
+That is, do features influence judgments by changing perceived risk, or do
+they have direct effects beyond what risk explains?
+
+The simplest test: compare feature coefficients in a model without risk
+(direct + indirect effects combined) versus a model with risk (direct
+effects only). A substantial reduction in feature coefficients when risk
+is added suggests mediation.
+
+```{r mediation}
+# ── Model without risk: features only ──
+m_features_only <- clmm(
+  culpability_f ~ source_bin + package_bin + inquiry_bin +
+                  payment_bin + location_bin + contents_bin + (1 | pid),
+  data = d
+)
+
+# ── Compare feature coefficients: with vs. without risk ──
+coef_no_risk <- summary(m_features_only)$coefficients
+coef_w_risk  <- summary(m_full)$coefficients
+
+feature_names <- c("source_bin", "package_bin", "inquiry_bin",
+                   "payment_bin", "location_bin", "contents_bin")
+feature_labels <- c("Source", "Package", "Inquiry", 
+                    "Payment", "Location", "Contents")
+
+mediation_table <- tibble(
+  Feature = feature_labels,
+  b_total  = coef_no_risk[feature_names, "Estimate"],
+  b_direct = coef_w_risk[feature_names, "Estimate"],
+  reduction_pct = (1 - b_direct / b_total) * 100
+)
+
+mediation_table %>%
+  kable(digits = c(0, 3, 3, 1),
+        col.names = c("Feature", "b (no risk)", "b (with risk)", "% reduction"),
+        caption = "Mediation check: coefficient reduction when risk is added") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+**Mediation interpretation.** A positive reduction means the feature effect
+shrinks when risk is added, suggesting risk partially mediates that feature's
+influence on culpability. Source and Package show the largest reductions (over
+50% and 80% respectively), indicating that much of their effect operates
+through perceived risk: participants who see a biker or duffel bag rate the
+situation as riskier, and that elevated risk drives the culpability increase.
+
+Location and Contents show *negative* reductions, meaning their coefficients
+get *larger* (more negative) when risk is added. This is a suppression effect:
+the feature and risk are correlated in one direction, but the feature pushes
+culpability in the opposite direction once risk is controlled for. One
+possibility is that participants who see "fentanyl" rate the scenario as
+riskier (higher slider) but simultaneously infer that the defendant is less
+culpable — a kind of "it was so obviously dangerous they must not have known"
+reasoning. This suppression pattern, combined with the overall mediation
+results, suggests that vignette features influence judgments through at least
+two pathways: an indirect route through perceived risk (dominant for Source
+and Package) and a direct route reflecting qualitative inferences about
+intent (dominant for Payment).
+
+```{r low-slider-exploration}
+# ── Exploratory: do very low slider values function as "no awareness"? ──
+# The MPC distinguishes negligence (failure to perceive risk) from
+# recklessness (conscious disregard of perceived risk). If participants
+# use the low end of the slider to indicate non-awareness, we should see
+# an elevated proportion of Blamelessness and Negligence judgments at
+# very low slider values.
+
+d <- d %>%
+  mutate(low_risk = slider_value <= 10)
+
+low_risk_table <- d %>%
+  group_by(low_risk) %>%
+  count(judgment) %>%
+  mutate(pct = n / sum(n) * 100) %>%
+  dplyr::select(-n) %>%
+  pivot_wider(names_from = judgment, values_from = pct, values_fill = 0)
+
+cat("── Judgment distribution by slider range ──\n")
+low_risk_table %>%
+  mutate(low_risk = ifelse(low_risk, "Slider ≤ 10", "Slider > 10")) %>%
+  kable(digits = 1, caption = "Judgment proportions for low vs. higher risk ratings") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+
+## Order and Learning Effects
+
+Do judgments shift across the five vignettes within a session? If
+participants are learning from the task or developing a response strategy,
+we might see systematic position effects.
+
+```{r order-effects}
+# ── Mean culpability by presentation position ──
+position_summary <- d %>%
+  group_by(position) %>%
+  summarise(
+    mean_culp = mean(culpability),
+    se_culp   = sd(culpability) / sqrt(n()),
+    mean_risk = mean(slider_value),
+    se_risk   = sd(slider_value) / sqrt(n()),
+    .groups = "drop"
+  )
+
+position_summary %>%
+  kable(digits = 2, caption = "Mean culpability and risk by presentation position") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+
+# ── Test position as a predictor in the CLMM ──
+m_position <- clmm(
+  culpability_f ~ slider_value + position + (1 | pid),
+  data = d
+)
+
+pos_coef <- summary(m_position)$coefficients["position", ]
+cat("Position effect in CLMM: b =", fmt_num(pos_coef["Estimate"], 3),
+    ", z =", fmt_num(pos_coef["z value"], 2),
+    ", p", fmt_p(pos_coef["Pr(>|z|)"]), "\n")
+```
+
+
+# Model Diagnostics
+
+## Proportional Odds Assumption
+
+The CLMM assumes proportional odds: the effect of each predictor on the
+log-odds is the same across all three threshold transitions. A violation
+would mean, for example, that risk matters more for the transition from
+Negligence to Recklessness than for Blamelessness to Negligence.
+
+We test this by fitting separate binary logistic models at each threshold
+and comparing the risk coefficients. If they are roughly similar, the
+assumption holds.
+
+```{r proportional-odds}
+# ── Threshold-specific models ──
+# Create binary outcomes at each threshold:
+#   Y1: culpability >= 2 (Negligence or higher vs. Blamelessness)
+#   Y2: culpability >= 3 (Recklessness or higher vs. Negligence or lower)
+#   Y3: culpability >= 4 (Knowledge vs. everything else)
+
+d <- d %>%
+  mutate(
+    y_ge2 = as.integer(culpability >= 2),
+    y_ge3 = as.integer(culpability >= 3),
+    y_ge4 = as.integer(culpability >= 4)
+  )
+
+# Fit a logistic mixed model at each threshold.
+m_t1 <- glmer(y_ge2 ~ slider_value + (1 | pid), data = d, family = binomial,
+              control = glmerControl(optimizer = "bobyqa"))
+m_t2 <- glmer(y_ge3 ~ slider_value + (1 | pid), data = d, family = binomial,
+              control = glmerControl(optimizer = "bobyqa"))
+m_t3 <- glmer(y_ge4 ~ slider_value + (1 | pid), data = d, family = binomial,
+              control = glmerControl(optimizer = "bobyqa"))
+
+# Compare the risk coefficients.
+threshold_coefs <- tibble(
+  Threshold = c("≥ Negligence (1→2+)", "≥ Recklessness (2→3+)", "≥ Knowledge (3→4)"),
+  b_risk = c(fixef(m_t1)["slider_value"], 
+             fixef(m_t2)["slider_value"],
+             fixef(m_t3)["slider_value"]),
+  SE = c(sqrt(vcov(m_t1)["slider_value","slider_value"]),
+         sqrt(vcov(m_t2)["slider_value","slider_value"]),
+         sqrt(vcov(m_t3)["slider_value","slider_value"]))
+) %>%
+  mutate(
+    ci_lo = b_risk - 1.96 * SE,
+    ci_hi = b_risk + 1.96 * SE
+  )
+
+threshold_coefs %>%
+  kable(digits = 4,
+        col.names = c("Threshold", "b (risk)", "SE", "95% CI lo", "95% CI hi"),
+        caption = "Risk coefficient at each threshold (proportional odds check)") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r proportional-odds-diagnostic}
+# ── Formal assessment ──
+# The proportional odds assumption requires these three coefficients to be
+# approximately equal. We check whether their 95% CIs overlap.
+
+cat("── Proportional odds diagnostic ──\n")
+cat("Risk coefficient at Threshold 1 (≥ Negligence):   ", 
+    fmt_num(threshold_coefs$b_risk[1], 4), "\n")
+cat("Risk coefficient at Threshold 2 (≥ Recklessness): ", 
+    fmt_num(threshold_coefs$b_risk[2], 4), "\n")
+cat("Risk coefficient at Threshold 3 (≥ Knowledge):    ", 
+    fmt_num(threshold_coefs$b_risk[3], 4), "\n\n")
+
+# Ratio of smallest to largest coefficient
+ratio_3_1 <- threshold_coefs$b_risk[3] / threshold_coefs$b_risk[1]
+cat("Ratio (Threshold 3 / Threshold 1):", fmt_num(ratio_3_1, 3), "\n\n")
+
+# Do CIs of Threshold 1 and Threshold 3 overlap?
+ci_overlap <- threshold_coefs$ci_lo[1] < threshold_coefs$ci_hi[3] &
+              threshold_coefs$ci_lo[3] < threshold_coefs$ci_hi[1]
+
+if (!ci_overlap & ratio_3_1 < 0.5) {
+  cat("CONCLUSION: The proportional odds assumption is VIOLATED.\n")
+  cat("The risk coefficient drops monotonically across thresholds, from\n")
+  cat(fmt_num(threshold_coefs$b_risk[1], 3), "at the lowest transition to",
+      fmt_num(threshold_coefs$b_risk[3], 3), "at the highest.\n")
+  cat("The coefficient at the Knowledge threshold is roughly",
+      round(1/ratio_3_1, 1), "times smaller\n")
+  cat("than at the Negligence threshold (95% CIs do NOT overlap).\n\n")
+  cat("This means risk perception is a strong discriminator between\n")
+  cat("Blamelessness, Negligence, and Recklessness, but a much weaker\n")
+  cat("discriminator at the top of the culpability scale. This is\n")
+  cat("consistent with the H4 reversal (Knowledge trials having LOWER\n")
+  cat("risk ratings than Recklessness trials) and suggests that the\n")
+  cat("Knowledge category is driven by qualitative cues (e.g., payment)\n")
+  cat("rather than quantitative risk perception.\n")
+} else {
+  cat("CONCLUSION: The proportional odds assumption is approximately satisfied.\n")
+  cat("Risk coefficients across thresholds:", 
+      paste(fmt_num(threshold_coefs$b_risk, 3), collapse = ", "), "\n")
+  cat("95% CIs", ifelse(ci_overlap, "overlap", "do NOT overlap"), 
+      "; ratio =", fmt_num(ratio_3_1, 3), "\n")
+}
+```
+
+```{r proportional-odds-plot, fig.height=4}
+# ── Visualize the proportional odds check ──
+threshold_coefs %>%
+  mutate(Threshold = factor(Threshold, levels = Threshold)) %>%
+  ggplot(aes(x = Threshold, y = b_risk)) +
+  geom_hline(yintercept = coef(m_risk)["slider_value"], 
+             linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi), width = 0.15, linewidth = 0.6) +
+  geom_point(size = 3) +
+  annotate("text", x = 0.6, y = coef(m_risk)["slider_value"], 
+           label = "CLMM pooled estimate", hjust = 0, vjust = -0.8, 
+           size = 3, color = "grey40") +
+  labs(x = NULL, y = "Risk Coefficient (log-odds)") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(size = 9))
+```
+
+
+## ROC Analysis for Threshold Models
+
+As suggested during review, we compute ROC curves and AUC values for each
+threshold-specific logistic model. This provides a complementary measure
+of how well the risk slider discriminates at each transition point.
+
+```{r roc-analysis, fig.height=4, fig.width=6}
+# ── ROC curves for each threshold model ──
+# Extract predicted probabilities from each threshold-specific GLMM.
+d$pred_t1 <- predict(m_t1, type = "response")
+d$pred_t2 <- predict(m_t2, type = "response")
+d$pred_t3 <- predict(m_t3, type = "response")
+
+roc_t1 <- roc(d$y_ge2, d$pred_t1, quiet = TRUE)
+roc_t2 <- roc(d$y_ge3, d$pred_t2, quiet = TRUE)
+roc_t3 <- roc(d$y_ge4, d$pred_t3, quiet = TRUE)
+
+cat("── AUC by threshold ──\n")
+cat("≥ Negligence (B vs. N+):    AUC =", fmt_num(auc(roc_t1), 3), "\n")
+cat("≥ Recklessness (N- vs. R+): AUC =", fmt_num(auc(roc_t2), 3), "\n")
+cat("≥ Knowledge (R- vs. K):     AUC =", fmt_num(auc(roc_t3), 3), "\n")
+cat("\nAUC declines at the Knowledge threshold, consistent with the\n")
+cat("proportional odds violation and the H4 risk reversal.\n")
+```
+
+
+## Vignette Feature Balance
+
+The minimization algorithm should produce roughly balanced factor levels.
+We verify this here.
+
+```{r feature-balance}
+# ── Check that each binary feature is approximately 50/50 ──
+balance_table <- d %>%
+  summarise(across(c(source_bin, package_bin, inquiry_bin, 
+                     payment_bin, location_bin, contents_bin),
+                   ~ mean(.x) * 100)) %>%
+  pivot_longer(everything(), names_to = "Feature", values_to = "Pct_Level_1") %>%
+  mutate(
+    Feature = recode(Feature,
+      "source_bin"   = "Source (biker)",
+      "package_bin"  = "Package (duffel bag)",
+      "inquiry_bin"  = "Inquiry (source tells)",
+      "payment_bin"  = "Payment ($1000)",
+      "location_bin" = "Location (Mexico)",
+      "contents_bin" = "Contents (fentanyl)"
+    ),
+    Pct_Level_0 = 100 - Pct_Level_1
+  )
+
+balance_table %>%
+  kable(digits = 1, col.names = c("Feature", "% Level 1", "% Level 0"),
+        caption = "Feature balance (ideal: 50/50)") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+
+# Publication-Quality Figures
+
+All figures use grayscale, clean white backgrounds, and no titles (titles
+go in figure captions in the manuscript). These are saved as PDFs for
+vector-quality reproduction.
+
+```{r pub-fig-setup}
+# ── Global theme for publication figures ──
+theme_pub <- theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.line = element_line(color = "black", linewidth = 0.3),
+    axis.ticks = element_line(color = "black", linewidth = 0.3),
+    legend.position = "bottom",
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+```{r fig-judgment-dist, fig.width=6, fig.height=4}
+# ── Figure 1: Judgment distribution ──
+fig1_base <- d %>%
+  mutate(judgment = factor(judgment,
+    levels = c("Blamelessness","Negligence","Recklessness","Knowledge"))) %>%
+  count(judgment) %>%
+  mutate(pct = n / sum(n) * 100)
+
+fig1_color <- ggplot(fig1_base, aes(x = judgment, y = pct, fill = judgment)) +
+  geom_col(color = "black", linewidth = 0.3) +
+  geom_hline(yintercept = 25, linetype = "dashed", color = "grey30") +
+  scale_fill_manual(values = judgment_colors, guide = "none") +
+  labs(x = NULL, y = "Percentage of Trials (%)") +
+  scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, 10)) +
+  theme_pub
+
+fig1_bw <- ggplot(fig1_base, aes(x = judgment, y = pct, fill = judgment)) +
+  geom_col(color = "black", linewidth = 0.3) +
+  geom_hline(yintercept = 25, linetype = "dashed", color = "grey30") +
+  scale_fill_manual(values = judgment_grays, guide = "none") +
+  labs(x = NULL, y = "Percentage of Trials (%)") +
+  scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, 10)) +
+  theme_pub
+
+fig1_color
+save_dual(fig1_color, fig1_bw, "fig1_judgment_distribution", 6, 4)
+```
+
+```{r fig-risk-violin, fig.width=6, fig.height=5}
+# ── Figure 2: Risk slider distribution by mental state ──
+# NOTE: Error bars are bootstrapped 95% CIs (mean_cl_boot), which may be
+# slightly asymmetric around the mean. This is expected and correct behavior
+# for bootstrapped intervals, not a rendering artifact.
+fig2_base <- d %>%
+  mutate(judgment = factor(judgment,
+    levels = c("Blamelessness","Negligence","Recklessness","Knowledge")))
+
+fig2_color <- ggplot(fig2_base, aes(x = judgment, y = slider_value, fill = judgment)) +
+  geom_violin(color = "grey40", alpha = 0.6) +
+  geom_jitter(width = 0.12, alpha = 0.12, size = 0.6, color = "black") +
+  stat_summary(fun = mean, geom = "point", size = 2.5, color = "black") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", 
+               width = 0.12, linewidth = 0.7) +
+  scale_fill_manual(values = judgment_colors, guide = "none") +
+  labs(x = NULL, y = "Risk Slider (0–100)") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 25)) +
+  theme_pub
+
+fig2_bw <- ggplot(fig2_base, aes(x = judgment, y = slider_value, fill = judgment)) +
+  geom_violin(color = "grey40", alpha = 0.6) +
+  geom_jitter(width = 0.12, alpha = 0.12, size = 0.6, color = "black") +
+  stat_summary(fun = mean, geom = "point", size = 2.5, color = "black") +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", 
+               width = 0.12, linewidth = 0.7) +
+  scale_fill_manual(values = judgment_grays, guide = "none") +
+  labs(x = NULL, y = "Risk Slider (0–100)") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 25)) +
+  theme_pub
+
+fig2_color
+save_dual(fig2_color, fig2_bw, "fig2_risk_by_judgment", 6, 5)
+```
+
+```{r fig-predicted-probs, fig.width=7, fig.height=5}
+# ── Figure 3: Predicted probability curves from CLMM with 95% CIs ──
+# Uses color + linetype for online/print compatibility, plus geom_textpath
+# labels directly on curves per Jaime's suggestion.
+# Each label is placed at a different hjust to avoid the crossing zone.
+
+# Label placement: position each label where its curve has breathing room.
+#   Blamelessness peaks left  → label early (hjust 0.12)
+#   Negligence peaks ~30      → label at 0.28
+#   Recklessness peaks ~75    → label at 0.72
+#   Knowledge rises right     → label late (0.88)
+label_hjust <- c(
+  "Blamelessness" = 0.12,
+  "Negligence"    = 0.28,
+  "Recklessness"  = 0.80,
+  "Knowledge"     = 0.60
+)
+
+# Helper to build the plot with a given color palette
+build_fig3 <- function(color_pal) {
+  p <- ggplot(pred_with_ci, aes(x = slider, y = probability,
+                                 color = judgment, linetype = judgment)) +
+    geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi, fill = judgment, group = judgment),
+                alpha = 0.15, color = NA)
+  
+  # Add each curve's label at its own position
+  for (j in names(label_hjust)) {
+    p <- p + geom_textpath(
+      data = pred_with_ci %>% filter(judgment == j),
+      aes(label = judgment), linewidth = 0.9,
+      size = 3, hjust = label_hjust[j], text_smoothing = 50
+    )
+  }
+  
+  p + scale_color_manual(values = color_pal) +
+    scale_fill_manual(values = color_pal) +
+    scale_linetype_manual(values = judgment_linetypes) +
+    labs(x = "Risk Slider (0–100)", y = "Predicted Probability") +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+    scale_x_continuous(breaks = seq(0, 100, 25)) +
+    guides(color = "none", fill = "none", linetype = "none") +
+    theme_pub
+}
+
+fig3_color <- build_fig3(judgment_colors)
+fig3_bw    <- build_fig3(judgment_grays)
+
+fig3_color
+save_dual(fig3_color, fig3_bw, "fig3_predicted_probabilities", 7, 5)
+```
+
+```{r fig-forest, fig.width=6, fig.height=4}
+# ── Figure 4: Forest plot of feature effects ──
+# Color version: highlight significant predictors
+fig4_color <- forest_data %>%
+  mutate(sig_flag = ifelse(p_holm < .05, "Significant", "Not significant")) %>%
+  ggplot(aes(x = b, y = Predictor)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.2, linewidth = 0.6) +
+  geom_point(aes(color = sig_flag), size = 2.5) +
+  scale_color_manual(values = c("Significant" = "#D55E00", "Not significant" = "black"),
+                     guide = "none") +
+  labs(x = "Log-Odds Coefficient (95% CI)", y = NULL) +
+  theme_pub
+
+fig4_bw <- forest_data %>%
+  ggplot(aes(x = b, y = Predictor)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0.2, linewidth = 0.6) +
+  geom_point(size = 2.5) +
+  labs(x = "Log-Odds Coefficient (95% CI)", y = NULL) +
+  theme_pub
+
+fig4_color
+save_dual(fig4_color, fig4_bw, "fig4_forest_plot", 6, 4)
+```
+
+```{r fig-prop-odds, fig.width=6, fig.height=4}
+# ── Figure 5: Proportional odds diagnostic ──
+fig5_data <- threshold_coefs %>%
+  mutate(Threshold = factor(
+    c("B vs. N+", "N- vs. R+", "R- vs. K"),
+    levels = c("B vs. N+", "N- vs. R+", "R- vs. K")))
+
+fig5_color <- ggplot(fig5_data, aes(x = Threshold, y = b_risk)) +
+  geom_hline(yintercept = coef(m_risk)["slider_value"], 
+             linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi), width = 0.12, linewidth = 0.6,
+                color = "#0072B2") +
+  geom_point(size = 3, color = "#0072B2") +
+  annotate("text", x = 0.6, y = coef(m_risk)["slider_value"],
+           label = "CLMM pooled estimate", hjust = 0, vjust = -0.8,
+           size = 3, color = "grey40") +
+  labs(x = "Cumulative Threshold", y = "Risk Coefficient (log-odds)") +
+  theme_pub
+
+fig5_bw <- ggplot(fig5_data, aes(x = Threshold, y = b_risk)) +
+  geom_hline(yintercept = coef(m_risk)["slider_value"], 
+             linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi), width = 0.12, linewidth = 0.6) +
+  geom_point(size = 3) +
+  annotate("text", x = 0.6, y = coef(m_risk)["slider_value"],
+           label = "CLMM pooled estimate", hjust = 0, vjust = -0.8,
+           size = 3, color = "grey40") +
+  labs(x = "Cumulative Threshold", y = "Risk Coefficient (log-odds)") +
+  theme_pub
+
+fig5_color
+save_dual(fig5_color, fig5_bw, "fig5_proportional_odds", 6, 4)
+```
+
+
+# Summary
+
+```{r summary-table}
+# ── Bring all hypothesis results into one table ──
+
+# For H2, report both CLMM z and ρ for completeness.
+h2_test_str <- paste0("CLMM z = ", fmt_num(risk_z, 2),
+                       "; ρ = ", fmt_num(rho_test$estimate, 3))
+h2_es_str   <- paste0("OR/10pt = ", fmt_num(exp(risk_b * 10), 3),
+                       "; β_std = ", fmt_num(risk_b_std, 3))
+
+# For H3, report the CLMM z for payment.
+h3_z   <- summary(m_full)$coefficients["payment_bin", "z value"]
+h3_p   <- summary(m_full)$coefficients["payment_bin", "Pr(>|z|)"]
+h3_d   <- summary(m_full)$coefficients["payment_bin", "Estimate"] * sqrt(3) / pi
+h3_or  <- exp(summary(m_full)$coefficients["payment_bin", "Estimate"])
+
+# For H4, report two-tailed p since the effect is reversed.
+h4_test_str <- paste0("t = ", fmt_num(t_val, 2), 
+                       "; d = ", fmt_num(cohens_d_rk, 3))
+
+summary_results <- tribble(
+  ~Hypothesis, ~Test, ~`Effect Size`, ~p, ~Decision,
+  
+  "H1: Non-uniform",
+  paste0("χ²(3) = ", round(chi_adj, 1), " (DEFF-adj)"),
+  paste0("w = ", fmt_num(as.numeric(cohens_w), 3)),
+  fmt_p(p_adj),
+  "Supported",
+  
+  "H2: Risk–culpability",
+  h2_test_str,
+  h2_es_str,
+  fmt_p(risk_p),
+  "Supported",
+  
+  "H3: Payment bias",
+  paste0("z = ", fmt_num(h3_z, 2)),
+  paste0("d ≈ ", fmt_num(h3_d, 3), "; OR = ", fmt_num(h3_or, 3)),
+  fmt_p(h3_p),
+  "Supported",
+  
+  "H4: R vs. K (exploratory)",
+  h4_test_str,
+  paste0("b = ", fmt_num(rk_coef["Estimate"], 2)),
+  fmt_p(p_two_tailed),
+  "Reversed (K < R)"
+)
+
+summary_results %>%
+  kable(caption = "Summary of hypothesis tests") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r cleanup}
+# ── Save publication figures to a designated folder ──
+cat("Publication figures saved (color + grayscale pairs):\n")
+cat("  fig1_judgment_distribution.pdf / _bw.pdf\n")
+cat("  fig2_risk_by_judgment.pdf / _bw.pdf\n")
+cat("  fig3_predicted_probabilities.pdf / _bw.pdf\n")
+cat("  fig4_forest_plot.pdf / _bw.pdf\n")
+cat("  fig5_proportional_odds.pdf / _bw.pdf\n")
+```
+
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
