@@ -54,4 +54,4 @@ The Study 1 R reports, the registered Study 2 run and the combined report ran on
 
 ## License
 
-The code is released under the MIT License (see `LICENSE`). The data and the materials created for these studies are released under the Creative Commons Attribution 4.0 International License ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Citation details will be added after review.
+The code is released under the MIT License (see `LICENSE`). Citation details will be added after review.
