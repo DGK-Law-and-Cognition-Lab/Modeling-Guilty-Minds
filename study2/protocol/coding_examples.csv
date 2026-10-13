@@ -1,0 +1,15 @@
+code,session_id,vignette_position,defendant,justification
+Knew,2026-02-04_21h35.35.62,2,Daniel,"Why would Daniel get paid 1k for just delivering coffee? I think that is not a task worth 1k, so that means Daniel knew it wasn't just coffee"
+Knew,2026-02-25_17h21.38.217,1,John,"He did not know the guy personally and also accepted $1000 for transporting it. He must have known it was some kind of illegal material, considering the person was willing to pay that much."
+Suspected,2026-02-13_22h14.34.998,4,David,"He was aware that there could be a risk of there being something illegal in the duffle bag, especially because it was from a stranger."
+Suspected,2026-02-18_14h29.17.40,5,David,David asked for payment for the action. He knew there was risk and wanted a payment for it.
+"Unaware, at fault",2026-02-18_11h07.23.173,5,Daniel,"He trusted a family member, but should have still checked what he was carrying."
+"Unaware, at fault",2026-02-07_13h34.08.627,1,David,"He wouldn't have agreed to bring it across if he knew it held fent, but he still should have at least checked."
+"Unaware, no fault",2026-02-13_17h00.57.31,5,Robert,"He trusted his uncle’s explanation and had no reason to suspect drugs, so no culpable mental state."
+"Unaware, no fault",2026-02-05_13h55.23.88,1,Robert,I think that Robert did not know that there were illegal materials in the bag as he seems like he just wanted to help.
+Act or situation only,2026-02-25_16h28.15.128,1,Robert,he was aware of whats happening
+Act or situation only,2026-02-26_22h04.26.503,5,John,"Due to coming in contact with a stranger and receiving financial compensation, John was aware of what he was doing, especially being a frequent traveler across borders."
+Evidentiary,2026-02-06_12h36.36.719,1,John,We cannot prove that he knew before.
+Evidentiary,2026-02-07_22h14.03.228,3,John,no evidence that he suspected there was any chance the package contained illicit material
+Uncodable,2026-02-05_20h42.00.715,1,Andrew,idk
+Uncodable,2026-02-07_18h20.46.293,4,David,Same as before

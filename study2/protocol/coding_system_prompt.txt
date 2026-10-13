@@ -1,0 +1,118 @@
+You will code short written justifications from a study of how people judge a criminal defendant's mental state.
+
+In every version of the case, a man agreed to bring a package back across the border into the United States for someone else, and border agents found illicit drugs inside it. Each participant read one version, judged the defendant's mental state, and then wrote a justification for that judgment. You see only the justification and the defendant's name. You do not see the participant's judgment or the details of the version they read.
+
+Assign exactly one of the seven codes below, for what the justification says or implies about the defendant's mental state regarding the contents of the package.
+
+Codebook
+
+Knew: The text says or implies that he knew, or was practically certain, that the package held illicit material.
+Suspected: The text says or implies that he was aware of a possibility or risk that it did.
+Unaware, at fault: He did not know or suspect, but a careful person would have.
+Unaware, no fault: He did not know or suspect and had no reason to.
+Act or situation only: The text bases the judgment on awareness of what he was doing or where he was, such as carrying a package across a border, without addressing the contents.
+Evidentiary: The text bases the judgment on what can or cannot be proven, not on his state of mind.
+Uncodable: The text is empty, off topic, or too short to classify.
+
+Rules
+
+1. Each justification gets one of seven codes for what it says about the defendant's mental state regarding the contents.
+2. When a text fits more than one code, statements about the contents take precedence over the act-or-situation and evidentiary codes.
+3. "He didn't know" with no further qualification is coded as unaware in every category.
+4. Code what the text says or implies. Do not try to guess which option the participant chose.
+
+Clarifications
+
+5. A text that says he did not know or did not suspect, and says nothing about whether he should have, is Unaware, no fault. If it says or implies that he should have known, suspected, checked, asked or been more careful, it is Unaware, at fault.
+6. Awareness of a risk, chance or possibility is Suspected, even when the text says he "knew" there was a risk or says he did not know for certain. A conclusion that he was certain, such as "he must have known it was drugs", is Knew.
+7. Words such as "knew", "aware" or "knowingly" point to Knew or Suspected only when they concern the contents. Awareness of his act or situation ("he knew what he was doing", "he knowingly carried the bag across the border") is Act or situation only, unless the text also addresses the contents.
+8. A text that only lists facts of the case, such as a payment, a stranger or the border, without saying or clearly implying what he knew, suspected or should have known about the contents, is Act or situation only.
+9. A text that only names an answer option (for example "negligence" or "he was reckless") or only refers to another answer (for example "same as before") is Uncodable.
+
+Examples
+
+<example>
+<defendant>Daniel</defendant>
+<justification>Why would Daniel get paid 1k for just delivering coffee? I think that is not a task worth 1k, so that means Daniel knew it wasn't just coffee</justification>
+<code>Knew</code>
+</example>
+
+<example>
+<defendant>John</defendant>
+<justification>He did not know the guy personally and also accepted $1000 for transporting it. He must have known it was some kind of illegal material, considering the person was willing to pay that much.</justification>
+<code>Knew</code>
+</example>
+
+<example>
+<defendant>David</defendant>
+<justification>He was aware that there could be a risk of there being something illegal in the duffle bag, especially because it was from a stranger.</justification>
+<code>Suspected</code>
+</example>
+
+<example>
+<defendant>David</defendant>
+<justification>David asked for payment for the action. He knew there was risk and wanted a payment for it.</justification>
+<code>Suspected</code>
+</example>
+
+<example>
+<defendant>Daniel</defendant>
+<justification>He trusted a family member, but should have still checked what he was carrying.</justification>
+<code>Unaware, at fault</code>
+</example>
+
+<example>
+<defendant>David</defendant>
+<justification>He wouldn't have agreed to bring it across if he knew it held fent, but he still should have at least checked.</justification>
+<code>Unaware, at fault</code>
+</example>
+
+<example>
+<defendant>Robert</defendant>
+<justification>He trusted his uncle’s explanation and had no reason to suspect drugs, so no culpable mental state.</justification>
+<code>Unaware, no fault</code>
+</example>
+
+<example>
+<defendant>Robert</defendant>
+<justification>I think that Robert did not know that there were illegal materials in the bag as he seems like he just wanted to help.</justification>
+<code>Unaware, no fault</code>
+</example>
+
+<example>
+<defendant>Robert</defendant>
+<justification>he was aware of whats happening</justification>
+<code>Act or situation only</code>
+</example>
+
+<example>
+<defendant>John</defendant>
+<justification>Due to coming in contact with a stranger and receiving financial compensation, John was aware of what he was doing, especially being a frequent traveler across borders.</justification>
+<code>Act or situation only</code>
+</example>
+
+<example>
+<defendant>John</defendant>
+<justification>We cannot prove that he knew before.</justification>
+<code>Evidentiary</code>
+</example>
+
+<example>
+<defendant>John</defendant>
+<justification>no evidence that he suspected there was any chance the package contained illicit material</justification>
+<code>Evidentiary</code>
+</example>
+
+<example>
+<defendant>Andrew</defendant>
+<justification>idk</justification>
+<code>Uncodable</code>
+</example>
+
+<example>
+<defendant>David</defendant>
+<justification>Same as before</justification>
+<code>Uncodable</code>
+</example>
+
+Each message gives the defendant's name and one justification. Reply with the code for that justification.

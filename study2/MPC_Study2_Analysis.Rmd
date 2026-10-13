@@ -1,0 +1,856 @@
+---
+title: "Modeling Guilty Minds, Study 2: Registered Analysis"
+subtitle: "Data: `r params$data_source`"
+author: "David G. Kamper, Andrew Bistras, Jaime Castrellon"
+date: "`r Sys.Date()`"
+params:
+  data_source: "real"
+  boot_B: 5000
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 7, fig.height = 4.5, fig.align = "center", cache = FALSE)
+```
+
+```{r packages}
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(readr); library(purrr); library(stringr)
+  library(tibble); library(ggplot2)
+  library(lme4); library(lmerTest); library(ordinal); library(geepack)
+  library(knitr); library(kableExtra); library(jsonlite); library(diptest)
+})
+source("R/study2_functions.R")
+SRC <- params$data_source
+B   <- params$boot_B
+stopifnot(SRC %in% c("simulated", "structure", "real"), B >= 1000)
+CATS <- c("Blamelessness", "Negligence", "Recklessness", "Knowledge")
+FEATURES <- c("source", "package", "inquiry", "payment", "location", "contents")
+tbl <- function(x, caption = NULL, digits = 2, ...) {
+  kbl(x, caption = caption, digits = digits, ...) %>%
+    kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+}
+fig_dir <- file.path("output", "figures", SRC)
+save_dual <- function(fig, name, width = 7, height = 4.5) {
+  dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), fig, width = width, height = height)
+  ggsave(file.path(fig_dir, paste0(name, "_bw.pdf")), fig + scale_colour_grey(start = 0, end = .6) +
+           scale_fill_grey(start = .3, end = .85), width = width, height = height)
+}
+data_label <- c(simulated = "MASKED: simulated data (Study 1 resampled, known effects)",
+                structure = "MASKED: real Study 2 design, simulated outcomes",
+                real = "Study 2 data")[[SRC]]
+```
+
+```{r masked-banner, results="asis", echo=FALSE}
+if (SRC != "real") {
+  cat("<div style='border:2px solid #b00; padding:10px; margin:10px 0; background:#fff3f3;'>",
+      "<b>", data_label, ".</b> Every number in this report comes from masked data. None is a Study 2 result.",
+      "</div>")
+}
+```
+
+# About this report
+
+This script carries out the analyses in the Study 2 preregistration (submitted to OSF Registries on October 3, 2026), in the order the registration lists them: the confirmatory analyses (H1, H2 and V1, then the five sensitivity analyses), the replication analyses (R1 to R5), and the exploratory analyses (S1 to S11), which are labeled exploratory. A robustness check on the first 200 completions and the deviations table close the report.
+
+The script was written after data collection and built on two masked data sets that carry no Study 2 outcome: Study 1 participants resampled with known effects, and the real Study 2 design with simulated outcomes. It was then frozen, and it reads the real data only if its files match the frozen version. The parameter `data_source` chooses the data (`simulated`, `structure` or `real`).
+
+```{r freeze-guard}
+if (SRC == "real") {
+  freeze <- "protocol/analysis_freeze.txt"
+  if (!file.exists(freeze))
+    stop("The real data stay locked until the script is frozen: run 04_freeze.R once the justification codes exist. ",
+         "Nothing was read. (protocol/analysis_freeze.txt is missing.)")
+  frozen <- read.csv(freeze, stringsAsFactors = FALSE)
+  current <- vapply(frozen$file, freeze_md5, character(1), USE.NAMES = FALSE)
+  if (any(current != frozen$md5))
+    stop("These files differ from the frozen version, so the real data stay locked: ",
+         paste(frozen$file[current != frozen$md5], collapse = ", "))
+  stopifnot(B == 5000)
+  cat("Frozen files verified:", paste(frozen$file, collapse = ", "), "\n")
+} else {
+  cat("Masked data; the freeze check applies only to the real run.\n")
+}
+```
+
+# Data
+
+## Files
+
+```{r files}
+dir_in <- switch(SRC, simulated = "data/masked/simulated", structure = "data/masked/structure", real = "data/processed")
+f_trials <- file.path(dir_in, "study2_trials.csv")
+f_people <- file.path(dir_in, "study2_participants.csv")
+f_codes  <- if (SRC == "real") "data/processed/justification_codes.csv" else file.path(dir_in, "justification_codes.csv")
+f_kappa  <- if (SRC == "real") "protocol/check_set_results.csv" else file.path(dir_in, "check_set_results.csv")
+f_flow   <- if (SRC == "real") "output/stage1_flow.csv" else file.path(dir_in, "stage1_flow.csv")
+has_codes <- file.exists(f_codes)
+has_kappa <- file.exists(f_kappa)
+tibble(file = c(f_trials, f_people, f_codes, f_kappa, f_flow),
+       present = file.exists(c(f_trials, f_people, f_codes, f_kappa, f_flow))) %>% tbl("Input files")
+```
+
+## Study 2 trials and participants
+
+```{r load-study2}
+people <- read_csv(f_people, show_col_types = FALSE) %>%
+  mutate(pid = participant,
+         comprehension_first = as.integer(as.logical(comprehension_first)),
+         first_200 = as.logical(first_200),
+         any_legal_training = as.logical(any_legal_training),
+         tau = ranking_tau(ranking))
+trials <- read_csv(f_trials, col_types = cols(vignette_id = col_character(), .default = col_guess()),
+                   show_col_types = FALSE) %>%
+  mutate(vignette_id = str_pad(vignette_id, 6, pad = "0"), first_200 = as.logical(first_200))
+stopifnot(!any(duplicated(people$pid)), all(trials$participant %in% people$pid),
+          all(table(trials$participant) == 5), all(trials$choice %in% CATS),
+          all(c(trials$knew, trials$aware, trials$should) %in% c("Yes", "No")),
+          all(trials$slider >= 0 & trials$slider <= 100))
+
+codes2 <- if (has_codes) read_csv(f_codes, show_col_types = FALSE) %>% filter(study == 2) else NULL
+codes1 <- if (has_codes) read_csv(f_codes, show_col_types = FALSE) %>% filter(study == 1) else NULL
+if (has_codes) stopifnot(all(c(codes2$code, codes1$code) %in% c("Knew", "Suspected", "Unaware, at fault",
+  "Unaware, no fault", "Act or situation only", "Evidentiary", "Uncodable")))
+
+# Derived variables (preregistration, "Measured variables").
+add_codes <- function(d, codes) {
+  if (is.null(codes)) return(mutate(d, code = NA_character_, nli_denied = NA_integer_))
+  d %>% mutate(vignette_position = as.integer(vignette_position)) %>%
+    left_join(codes %>% transmute(participant = as.character(participant),
+                                  vignette_position = as.integer(vignette_position), code, nli_denied),
+              by = c("participant", "vignette_position"))
+}
+d <- trials %>%
+  add_codes(codes2) %>%
+  left_join(people %>% select(participant, comprehension_first, eligibility, jury_service,
+                              any_legal_training, comprehension_answer, rpm_score, tau),
+            by = "participant") %>%
+  mutate(
+    pid           = factor(participant),
+    position      = vignette_position,
+    culpability   = match(choice, CATS),
+    culpability_f = factor(culpability, levels = 1:4, ordered = TRUE),
+    is_knowledge  = as.integer(choice == "Knowledge"),
+    low_slider    = as.integer(slider < 50),
+    slider_c      = (slider - 25) / 10,
+    unendorsed    = as.integer(knew == "No"),
+    probe_cat     = probe_category(knew, aware, should),
+    probe_culp_f  = factor(match(probe_cat, CATS), levels = 1:4, ordered = TRUE),
+    probe_knowledge = as.integer(probe_cat == "Knowledge"),
+    inconsistent  = knew == "Yes" & aware == "No",
+    codable       = !is.na(code) & code != "Uncodable",
+    knowledge_stated = ifelse(codable, as.integer(code == "Knew"), NA_integer_),
+    denied        = ifelse(codable, as.integer(code %in% c("Unaware, at fault", "Unaware, no fault")), NA_integer_),
+    act_only      = ifelse(codable, as.integer(code == "Act or situation only"), NA_integer_)
+  )
+if (has_codes) stopifnot(!any(is.na(d$code)))
+```
+
+The data hold `r nrow(people)` people and `r nrow(d)` trials. The primary analyses use all of them, the full sample. The first 200 completions, `r sum(people$first_200)` people after exclusions, form the robustness sample in the last section.
+
+## Study 1 trials (for the Study 1 counterparts)
+
+```{r load-study1}
+s1 <- read_csv("data/study1_trials.csv", col_types = cols(.default = col_character()), show_col_types = FALSE)
+keep1 <- s1 %>% count(session_id) %>% filter(n == 5) %>% pull(session_id)
+s1 <- s1 %>%
+  filter(session_id %in% keep1) %>%
+  transmute(participant = session_id, vignette_position = as.integer(vignette_position),
+            vignette_id = str_pad(vignette_id, 6, pad = "0"), choice = judgment,
+            slider = as.numeric(slider_value), source_lab = source)
+bits1 <- do.call(rbind, lapply(strsplit(s1$vignette_id, ""), as.integer)); colnames(bits1) <- FEATURES
+s1 <- bind_cols(s1, as_tibble(bits1)) %>%
+  add_codes(codes1) %>%
+  mutate(pid = factor(participant), culpability = match(choice, CATS),
+         culpability_f = factor(culpability, levels = 1:4, ordered = TRUE),
+         is_knowledge = as.integer(choice == "Knowledge"),
+         codable = !is.na(code) & code != "Uncodable",
+         denied = ifelse(codable, as.integer(code %in% c("Unaware, at fault", "Unaware, no fault")), NA_integer_))
+stopifnot(nrow(s1) == 1060, all((s1$source_lab == "biker") == (s1$source == 1)))
+```
+
+Study 1 contributes `r n_distinct(s1$pid)` people and `r nrow(s1)` trials. Its features are read from the vignette ID, as in Study 2, and agree with its feature labels on every trial.
+
+## Justification codes and the check set
+
+```{r check-set}
+kappa <- if (has_kappa) read_csv(f_kappa, show_col_types = FALSE) else NULL
+k_stated <- if (has_kappa) kappa$kappa[kappa$measure == "knowledge_stated"] else NA
+k_denied <- if (has_kappa) kappa$kappa[kappa$measure == "awareness_denied"] else NA
+h2_registered <- isTRUE(k_stated >= .60)
+r4_registered <- isTRUE(k_denied >= .60)
+if (has_kappa) tbl(kappa, "Agreement between the automated coder and the hand codes on the check set", digits = 2)
+```
+
+```{r cross-check}
+if (has_codes) {
+  xc <- function(codes, label) {
+    llm <- as.integer(codes$code %in% c("Unaware, at fault", "Unaware, no fault"))
+    tibble(Study = label, Justifications = nrow(codes), `Denied, language model (%)` = 100 * mean(llm),
+           `Denied, inference model (%)` = 100 * mean(codes$nli_denied), `Cohen's kappa` = cohen_kappa(llm, codes$nli_denied))
+  }
+  bind_rows(xc(codes2, "Study 2"), xc(codes1, "Study 1")) %>%
+    tbl("Cross-check: agreement between the two automated coders on the awareness-denied code (uncodable texts count as not denied)", digits = 2)
+}
+```
+
+The registered threshold is a kappa of .60 for each binary code. H2 is tested as registered only if the knowledge-stated code reaches it (here `r ifelse(h2_registered, "it does", "it does not, so H2 is reported as exploratory")`), and R4 and the justification parts of S2 only if the awareness-denied code reaches it (here `r ifelse(r4_registered, "it does", "it does not, so they are reported as exploratory")`). Uncodable justifications are set to missing for every code-based variable.
+
+# Sample
+
+## Participant flow
+
+```{r flow}
+flow <- read_csv(f_flow, show_col_types = FALSE)
+tbl(flow, "Participant flow (Stage 1, exclusion variables only)")
+```
+
+## Description of the sample
+
+```{r sample}
+p <- people
+demo <- bind_rows(
+  tibble(Variable = "People", Value = as.character(nrow(p))),
+  tibble(Variable = "Age, mean (SD), range",
+         Value = sprintf("%.1f (%.1f), %d to %d", mean(p$age, na.rm = TRUE), sd(p$age, na.rm = TRUE),
+                         min(p$age, na.rm = TRUE), max(p$age, na.rm = TRUE))),
+  p %>% count(gender) %>% transmute(Variable = paste0("Gender: ", gender), Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p))),
+  p %>% count(education) %>% transmute(Variable = paste0("Education: ", education), Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p))),
+  p %>% count(jury_service) %>% transmute(Variable = paste0("Served on a jury: ", jury_service), Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p))),
+  p %>% count(any_legal_training) %>% transmute(Variable = paste0("Any legal training: ", ifelse(any_legal_training, "Yes", "No")), Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p))),
+  p %>% count(eligibility) %>% transmute(Variable = paste0("Jury eligible: ", eligibility), Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p))),
+  p %>% count(comprehension_first) %>% transmute(Variable = ifelse(comprehension_first == 1, "Order: comprehension item first", "Order: probe first"),
+                                                 Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p))),
+  tibble(Variable = "Completion time, median (IQR), minutes",
+         Value = sprintf("%.1f (%.1f to %.1f)", median(p$duration_min), quantile(p$duration_min, .25), quantile(p$duration_min, .75)))
+)
+races <- p %>% separate_rows(race, sep = "; ") %>% count(race) %>%
+  transmute(Variable = paste0("Race or ethnicity: ", race), Value = sprintf("%d (%.1f%%)", n, 100 * n / nrow(p)))
+tbl(bind_rows(demo, races), "Full sample (race and ethnicity allow several answers)")
+```
+
+# Descriptive results
+
+```{r descriptives}
+choice_tab <- d %>% count(choice) %>% mutate(choice = factor(choice, CATS)) %>% arrange(choice) %>%
+  mutate(percent = 100 * n / sum(n))
+slider_tab <- d %>% group_by(choice = factor(choice, CATS)) %>%
+  summarise(trials = n(), mean_slider = mean(slider), sd_slider = sd(slider), median_slider = median(slider),
+            knew_yes = mean(knew == "Yes"), aware_yes = mean(aware == "Yes"), should_yes = mean(should == "Yes"),
+            .groups = "drop")
+tbl(slider_tab, "Slider ratings and probe answers by original category (probe columns are proportions answering Yes)")
+icc_slider <- compute_icc(d$slider, d$pid); icc_culp <- compute_icc(d$culpability, d$pid)
+deff_culp <- compute_deff(icc_culp); deff_slider <- compute_deff(icc_slider)
+tibble(Measure = c("Slider (0 to 100)", "Culpability (1 to 4)"), ICC = c(icc_slider, icc_culp),
+       `Design effect` = c(deff_slider, deff_culp)) %>% tbl("Intraclass correlations and design effects", digits = 3)
+```
+
+# Confirmatory analyses
+
+All tests are two-sided at alpha = .05. A hypothesis is supported when p is below .05 and the estimate is in the predicted direction; a significant effect in the opposite direction counts against it. H1 is the only confirmatory test. H2 and V1 are secondary.
+
+## H1: unendorsement of low-slider Knowledge choices
+
+The data are all trials on which Knowledge was chosen, pooled across the two orders. The model is `glmer(unendorsed ~ low_slider + comprehension_first + (1 | pid), family = binomial)`; the prediction is a positive `low_slider` coefficient. If the model fails under bobyqa and again under Nelder-Mead, or any of the four outcome-by-slider-group cells has fewer than five trials, the participant-cluster bootstrap of the difference in raw rates replaces it.
+
+```{r h1}
+k <- d %>% filter(choice == "Knowledge")
+h1 <- run_h1(k, B = B, seed = 101, boot_or = TRUE)
+h1_supported <- isTRUE(h1$p < .05 && h1$estimate_positive)
+h1_against   <- isTRUE(h1$p < .05 && !h1$estimate_positive)
+tbl(as.data.frame.matrix(h1$cells) %>% rownames_to_column("unendorsed") %>%
+      rename(`slider 50 or above` = `0`, `slider below 50` = `1`),
+    "H1 cells: Knowledge trials by unendorsement (rows) and slider group (columns)")
+tibble(
+  Quantity = c("Knowledge trials (people)", "Model", "Fallback used", "Singular fit",
+               "Odds ratio for low slider [95% CI from the model]", "Odds ratio [95% participant-cluster bootstrap CI]",
+               "p (registered test)",
+               "Unendorsed, slider below 50 [95% CI]", "Unendorsed, slider 50 or above [95% CI]",
+               "Difference in rates [95% CI]", "Bootstrap p for the difference"),
+  Value = c(sprintf("%d (%d)", h1$n_trials, h1$n_people), h1$model_status, ifelse(h1$fallback, "yes", "no"),
+            ifelse(is.na(h1$singular), "not applicable", ifelse(h1$singular, "yes", "no")),
+            if (is.null(h1$or)) "not available" else paste(fmt_num(h1$or), fmt_or_ci(h1$or_lo, h1$or_hi)),
+            if (is.null(h1$or_boot_ci)) "not available" else
+              sprintf("%s %s (%d of %d refits failed)", fmt_num(h1$or), fmt_or_ci(h1$or_boot_ci[1], h1$or_boot_ci[2]), h1$or_boot_failed, B),
+            fmt_p(h1$p),
+            paste0(fmt_pct(h1$rate_low), "% ", fmt_ci(100 * h1$rate_low_ci[1], 100 * h1$rate_low_ci[2], 1), " (", h1$n_low, " trials)"),
+            paste0(fmt_pct(h1$rate_high), "% ", fmt_ci(100 * h1$rate_high_ci[1], 100 * h1$rate_high_ci[2], 1), " (", h1$n_high, " trials)"),
+            paste0(fmt_pct(h1$diff), " points ", fmt_ci(100 * h1$diff_ci[1], 100 * h1$diff_ci[2], 1)),
+            fmt_p(h1$p_boot))
+) %>% tbl("H1 results")
+```
+
+The unendorsed Knowledge rate, the study's main descriptive result, is `r fmt_pct(h1$rate_all)`% overall `r fmt_ci(100*h1$rate_all_ci[1], 100*h1$rate_all_ci[2], 1)`, `r fmt_pct(h1$rate_low)`% for slider ratings below 50 and `r fmt_pct(h1$rate_high)`% for ratings of 50 or above. H1 is `r ifelse(h1_supported, "supported", ifelse(h1_against, "contradicted: the effect is significant in the opposite direction", "not supported"))` (p `r fmt_p(h1$p)`, `r ifelse(h1$fallback, "registered fallback", "mixed model")`).
+
+```{r h1-unsupported, results="asis"}
+if (!h1_supported) {
+  hi <- h1$diff_ci[2]
+  cat(sprintf("Under the registered rule for an unsupported H1, the upper limit of the 95%% CI for the difference in unendorsement is %s points. ",
+              fmt_pct(hi)),
+      if (hi < .15) "It falls below 15 points, so low-slider Knowledge choices are endorsed about as often as high-slider ones, a pattern that fits dissociation or slider-response error; S2 and S11 bear on which." else
+        "It reaches 15 points, so the result is inconclusive.")
+}
+```
+
+```{r h1-figure}
+h1_fig <- tibble(group = factor(c("Slider below 50", "Slider 50 or above"), levels = c("Slider below 50", "Slider 50 or above")),
+                 rate = c(h1$rate_low, h1$rate_high), lo = c(h1$rate_low_ci[1], h1$rate_high_ci[1]),
+                 hi = c(h1$rate_low_ci[2], h1$rate_high_ci[2]))
+g_h1 <- ggplot(h1_fig, aes(group, rate, colour = group)) +
+  geom_pointrange(aes(ymin = lo, ymax = hi), size = .6, show.legend = FALSE) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+  labs(x = NULL, y = "Knowledge choices answered No to KNEW",
+       caption = paste0(data_label, ". Bars: 95% participant-cluster bootstrap CIs.")) +
+  theme_minimal(base_size = 12)
+save_dual(g_h1, "fig_h1_unendorsement")
+g_h1
+```
+
+## H2: justification content among low-slider Knowledge choices
+
+The data are Knowledge trials with a slider rating below 50 and a codable justification. The model is `glmer(unendorsed ~ knowledge_stated + slider_c + comprehension_first + (1 | pid), family = binomial)`, where `slider_c` is the slider rating centered at 25 and scaled in tens of points; the prediction is a negative `knowledge_stated` coefficient. The fallback is an ordinary logistic regression with the same fixed effects, with the focal coefficient bootstrapped by participant.
+
+```{r h2}
+k2 <- d %>% filter(choice == "Knowledge", slider < 50, codable)
+h2 <- if (has_codes && nrow(k2) > 0) run_h2(k2, B = B, seed = 202, boot_or = TRUE) else NULL
+if (!is.null(h2)) {
+  h2_supported <- isTRUE(h2$p < .05 && h2$estimate_negative)
+  h2_cells_tbl <- tbl(as.data.frame.matrix(h2$cells) %>% rownames_to_column("unendorsed") %>%
+        rename(`not coded Knew` = `0`, `coded Knew` = `1`), "H2 cells")
+  h2_tbl <- tibble(
+    Quantity = c("Status", "Trials (people)", "Model", "Fallback used",
+                 ifelse(h2$fallback, "Odds ratio for knowledge stated [95% participant-cluster bootstrap CI]", "Odds ratio for knowledge stated [95% CI from the model]"),
+                 "Odds ratio [95% participant-cluster bootstrap CI]", "p",
+                 "Unendorsed when coded Knew [95% CI]", "Unendorsed otherwise [95% CI]"),
+    Value = c(ifelse(h2_registered, "registered test", "exploratory (check-set kappa below .60)"),
+              sprintf("%d (%d)", h2$n_trials, h2$n_people), h2$model_status, ifelse(h2$fallback, "yes", "no"),
+              paste(fmt_num(h2$or), fmt_or_ci(h2$or_lo, h2$or_hi)),
+              if (h2$fallback) "as above" else if (is.null(h2$or_boot_ci)) "not available" else
+                sprintf("%s %s (%d of %d refits failed)", fmt_num(h2$or), fmt_or_ci(h2$or_boot_ci[1], h2$or_boot_ci[2]), h2$or_boot_failed, B),
+              fmt_p(h2$p),
+              paste0(fmt_pct(h2$rate_stated), "% ", fmt_ci(100 * h2$rate_stated_ci[1], 100 * h2$rate_stated_ci[2], 1), " (", h2$n_stated, ")"),
+              paste0(fmt_pct(h2$rate_unstated), "% ", fmt_ci(100 * h2$rate_unstated_ci[1], 100 * h2$rate_unstated_ci[2], 1), " (", h2$n_unstated, ")"))
+  ) %>% tbl("H2 results")
+} else {
+  h2_supported <- NA
+  cat("The justification codes are not available yet, so H2 is not run.\n")
+}
+if (!is.null(h2)) h2_cells_tbl
+if (!is.null(h2)) h2_tbl
+```
+
+`r if (!is.null(h2)) paste0("H2 is ", ifelse(h2_supported, "supported", "not supported"), if (!h2_registered) " (exploratory)" else "", ". ", if (!isTRUE(h2_supported)) "Because H2 has limited power, a non-significant result is inconclusive, not evidence for reconsideration." else "") else ""`
+
+## V1: validity check on Recklessness and Negligence choices
+
+The data are trials on which the original choice was Recklessness or Negligence and the probe-defined category is Knowledge or Recklessness. The model is `lmer(slider ~ probe_knowledge + (1 | pid))`; V1 passes if the coefficient is positive with p below .05.
+
+```{r v1}
+v <- d %>% filter(choice %in% c("Recklessness", "Negligence"), probe_cat %in% c("Knowledge", "Recklessness"))
+v1 <- run_v1(v)
+v1_pass <- isTRUE(v1$b > 0 && v1$p < .05)
+# Descriptive contrasts, participant-cluster bootstrap.
+pids_all <- levels(d$pid); W_all <- boot_counts(length(pids_all), B, seed = 303)
+pk <- boot_ratio(d, d$slider, d$probe_cat == "Knowledge", W_all, pids_all)
+pr <- boot_ratio(d, d$slider, d$probe_cat == "Recklessness", W_all, pids_all)
+ok <- boot_ratio(d, d$slider, d$choice == "Knowledge", W_all, pids_all)
+orr <- boot_ratio(d, d$slider, d$choice == "Recklessness", W_all, pids_all)
+c1 <- pk$boot - pr$boot; c2 <- (pk$boot - pr$boot) - (ok$boot - orr$boot)
+tibble(
+  Quantity = c("Trials (people); probe-defined Knowledge trials", "b, slider points [95% CI]", "t (df), p", "d",
+               "All trials: probe Knowledge minus probe Recklessness [95% CI]",
+               "Probe-defined difference minus original-category difference [95% CI]"),
+  Value = c(sprintf("%d (%d); %d", v1$n_trials, v1$n_people, v1$n_probe_k),
+            paste(fmt_num(v1$b), fmt_ci(v1$ci[1], v1$ci[2])),
+            sprintf("%s (%s), p %s", fmt_num(v1$t), fmt_num(v1$df, 1), fmt_p(v1$p)), fmt_num(v1$d),
+            paste(fmt_num(pk$est - pr$est), fmt_ci(pct_ci(c1)[1], pct_ci(c1)[2])),
+            paste(fmt_num((pk$est - pr$est) - (ok$est - orr$est)), fmt_ci(pct_ci(c2)[1], pct_ci(c2)[2])))
+) %>% tbl("V1 results")
+```
+
+V1 `r ifelse(v1_pass, "passes", "fails")`. `r if (!v1_pass) "The probe's validity is therefore in doubt, and H1 is reported with that caveat." else ""`
+
+## Sensitivity analyses
+
+H1, H2 and V1 are repeated (1) without the logically inconsistent probe trials (KNEW Yes, AWARE No), (2) with only participants who answered Yes to the eligibility item, (3) with a random intercept for vignette, (4) with only participants who saw the probe first, and (5) with generalized estimating equations (exchangeable working correlation, clustered by participant). In (4) the order covariate is constant and drops out. The fallback rule applies within each mixed-model analysis. Conclusions rest on the primary analyses; any disagreement is reported.
+
+```{r sensitivity}
+sens_specs <- list(
+  `Sensitivity 1: inconsistent probe trials dropped` = function(x) filter(x, !inconsistent),
+  `Sensitivity 2: eligibility Yes only`              = function(x) filter(x, eligibility == "Yes"),
+  `Sensitivity 3: random intercept for vignette`     = function(x) x,
+  `Sensitivity 4: probe first only`                  = function(x) filter(x, comprehension_first == 0)
+)
+sens_rows <- list()
+for (nm in names(sens_specs)) {
+  f <- sens_specs[[nm]]; re <- if (startsWith(nm, "Sensitivity 3")) "(1 | vignette_id)" else NULL
+  cov <- !startsWith(nm, "Sensitivity 4")
+  a <- run_h1(f(k), B = B, seed = 111, extra_re = re, covariate = cov)
+  sens_rows[[length(sens_rows) + 1]] <- tibble(Analysis = nm, Test = "H1", Trials = a$n_trials,
+    Estimate = if (a$fallback) sprintf("difference %s points", fmt_pct(a$diff)) else sprintf("OR %s", fmt_num(a$or)),
+    p = a$p, Fallback = a$fallback, Supported = isTRUE(a$p < .05 && a$estimate_positive))
+  if (has_codes) {
+    k2s <- f(k2)
+    b2 <- run_h2(k2s, B = B, seed = 212, extra_re = re, covariate = cov)
+    sens_rows[[length(sens_rows) + 1]] <- tibble(Analysis = nm, Test = "H2", Trials = b2$n_trials,
+      Estimate = sprintf("OR %s", fmt_num(b2$or)), p = b2$p, Fallback = b2$fallback,
+      Supported = isTRUE(b2$p < .05 && b2$estimate_negative))
+  }
+  vv <- run_v1(f(v), extra_re = re)
+  sens_rows[[length(sens_rows) + 1]] <- tibble(Analysis = nm, Test = "V1", Trials = vv$n_trials,
+    Estimate = sprintf("b %s", fmt_num(vv$b)), p = vv$p, Fallback = FALSE, Supported = isTRUE(vv$b > 0 && vv$p < .05))
+}
+g1 <- run_gee(unendorsed ~ low_slider + comprehension_first, k, binomial, "low_slider")
+sens_rows[[length(sens_rows) + 1]] <- tibble(Analysis = "Sensitivity 5: GEE", Test = "H1", Trials = g1$n_trials,
+  Estimate = sprintf("OR %s", fmt_num(exp(g1$b))), p = g1$p, Fallback = FALSE, Supported = isTRUE(g1$b > 0 && g1$p < .05))
+if (has_codes) {
+  g2 <- run_gee(unendorsed ~ knowledge_stated + slider_c + comprehension_first, k2, binomial, "knowledge_stated")
+  sens_rows[[length(sens_rows) + 1]] <- tibble(Analysis = "Sensitivity 5: GEE", Test = "H2", Trials = g2$n_trials,
+    Estimate = sprintf("OR %s", fmt_num(exp(g2$b))), p = g2$p, Fallback = FALSE, Supported = isTRUE(g2$b < 0 && g2$p < .05))
+}
+g3 <- run_gee(slider ~ probe_knowledge, v, gaussian, "probe_knowledge")
+sens_rows[[length(sens_rows) + 1]] <- tibble(Analysis = "Sensitivity 5: GEE", Test = "V1", Trials = g3$n_trials,
+  Estimate = sprintf("b %s", fmt_num(g3$b)), p = g3$p, Fallback = FALSE, Supported = isTRUE(g3$b > 0 && g3$p < .05))
+
+primary <- c(H1 = h1_supported, H2 = if (has_codes) h2_supported else NA, V1 = v1_pass)
+sens <- bind_rows(sens_rows) %>%
+  mutate(`Agrees with primary` = ifelse(Supported == primary[Test], "yes", "NO"), p = fmt_p(p)) %>%
+  arrange(Test, Analysis)
+n_dis <- sum(sens[["Agrees with primary"]] == "NO", na.rm = TRUE)
+tbl(sens, "Sensitivity analyses (Supported: p below .05 in the predicted direction)")
+```
+
+`r if (n_dis == 0) "Every sensitivity analysis agrees with the primary analysis." else paste0(n_dis, " sensitivity analyses disagree with the primary analysis; they are marked NO in the table.")`
+
+# Replication analyses
+
+The replication tests use only main-task data. R1 to R4 form one Holm family; a result replicates when its adjusted p is below .05 in the Study 1 direction. Each Study 2 estimate is shown beside its Study 1 counterpart, recomputed here from the Study 1 trial file with the same code.
+
+## R1: distribution of choices
+
+```{r r1}
+r1_fit <- function(x) {
+  obs <- table(factor(x$choice, CATS)); n <- sum(obs)
+  ct <- suppressWarnings(chisq.test(obs, p = rep(.25, 4)))
+  deff <- compute_deff(compute_icc(x$culpability, x$pid))
+  adj <- unname(ct$statistic) / deff
+  list(obs = obs, chi = unname(ct$statistic), p = ct$p.value, deff = deff, chi_adj = adj,
+       p_adj = pchisq(adj, 3, lower.tail = FALSE), w = sqrt(unname(ct$statistic) / n))
+}
+r1 <- r1_fit(d); r1_s1 <- r1_fit(s1)
+tibble(Study = c("Study 2", "Study 1"),
+       Blamelessness = c(r1$obs[1], r1_s1$obs[1]), Negligence = c(r1$obs[2], r1_s1$obs[2]),
+       Recklessness = c(r1$obs[3], r1_s1$obs[3]), Knowledge = c(r1$obs[4], r1_s1$obs[4]),
+       `chi-square(3)` = c(r1$chi, r1_s1$chi), `design effect` = c(r1$deff, r1_s1$deff),
+       `adjusted chi-square(3)` = c(r1$chi_adj, r1_s1$chi_adj), `p (adjusted)` = fmt_p(c(r1$p_adj, r1_s1$p_adj)),
+       `Cohen's w` = c(r1$w, r1_s1$w)) %>% tbl("R1: category counts against a uniform distribution")
+r1_follow <- map_dfr(CATS, function(cat) {
+  kk <- sum(d$choice == cat); tt <- prop.test(kk, nrow(d), p = .25)
+  tibble(Category = cat, Percent = 100 * kk / nrow(d), `Study 1 percent` = 100 * mean(s1$choice == cat), p = tt$p.value)
+}) %>% mutate(`p (Holm within R1)` = p.adjust(p, "holm"))
+r1_follow %>% mutate(across(matches("^p($| \\()", ignore.case = FALSE), fmt_p)) %>% tbl("R1 follow-up: each category against 25%", digits = 1)
+```
+
+## R2: slider and culpability
+
+```{r r2}
+r2_fit <- function(x) {
+  m <- fit_clmm(culpability_f ~ slider + (1 | pid), data = x, label = "R2")
+  cf <- summary(m)$coefficients["slider", ]
+  list(b = cf[["Estimate"]], se = cf[["Std. Error"]], z = cf[["z value"]], p = cf[["Pr(>|z|)"]],
+       or10 = exp(10 * cf[["Estimate"]]), or10_ci = exp(10 * (cf[["Estimate"]] + c(-1, 1) * qnorm(.975) * cf[["Std. Error"]])),
+       std = cf[["Estimate"]] * sd(x$slider))
+}
+r2 <- r2_fit(d); r2_s1 <- r2_fit(s1)
+tibble(Study = c("Study 2", "Study 1"), b = c(r2$b, r2_s1$b), z = c(r2$z, r2_s1$z), p = fmt_p(c(r2$p, r2_s1$p)),
+       `OR per 10 points` = c(r2$or10, r2_s1$or10),
+       `95% CI` = c(fmt_ci(r2$or10_ci[1], r2$or10_ci[2]), fmt_ci(r2_s1$or10_ci[1], r2_s1$or10_ci[2])),
+       `Standardized b` = c(r2$std, r2_s1$std)) %>% tbl("R2: clmm(culpability ~ slider + (1 | pid))", digits = 3)
+```
+
+## R3: payment
+
+The primary model contains only the six features. The Study 1 specification, which adds the slider, is shown for comparison only.
+
+```{r r3}
+f_feat <- culpability_f ~ source + package + inquiry + payment + location + contents + (1 | pid)
+f_s1spec <- culpability_f ~ slider + source + package + inquiry + payment + location + contents + (1 | pid)
+feat_table <- function(m, label) {
+  cf <- summary(m)$coefficients[FEATURES, , drop = FALSE]
+  tibble(Model = label, Feature = FEATURES, b = cf[, "Estimate"], SE = cf[, "Std. Error"], z = cf[, "z value"],
+         p = cf[, "Pr(>|z|)"]) %>% mutate(`p (Holm, six features)` = p.adjust(p, "holm"), OR = exp(b))
+}
+m_r3 <- fit_clmm(f_feat, d, "R3 Study 2 features only"); m_r3_s1spec <- fit_clmm(f_s1spec, d, "R3 Study 2, Study 1 specification")
+m_r3_study1 <- fit_clmm(f_feat, s1, "R3 Study 1 features only")
+r3_tab <- bind_rows(feat_table(m_r3, "Study 2, features only (primary)"),
+                    feat_table(m_r3_s1spec, "Study 2, Study 1 specification"),
+                    feat_table(m_r3_study1, "Study 1, features only"))
+r3_tab %>% mutate(across(c(p, `p (Holm, six features)`), fmt_p)) %>% tbl("R3: feature effects (cumulative link mixed models)", digits = 3)
+r3 <- r3_tab %>% filter(Model == "Study 2, features only (primary)", Feature == "payment")
+```
+
+## R4: awareness denial in the justifications
+
+The model is `glmer(denied ~ is_knowledge + (1 | pid), family = binomial)` on Knowledge and Recklessness trials with a codable justification. The Study 1 benchmark is recomputed with the same frozen protocol.
+
+```{r r4}
+r4_fit <- function(x) {
+  xx <- x %>% filter(choice %in% c("Knowledge", "Recklessness"), codable)
+  f <- fit_glmer_rule(denied ~ is_knowledge + (1 | pid), xx)
+  w <- if (!is.null(f$model)) wald_row(f$model, "is_knowledge") else list(or = NA, or_lo = NA, or_hi = NA, b = NA, p = NA)
+  list(n = nrow(xx), rate_k = mean(xx$denied[xx$is_knowledge == 1]), rate_r = mean(xx$denied[xx$is_knowledge == 0]),
+       or = w$or, or_lo = w$or_lo, or_hi = w$or_hi, b = w$b, p = w$p, status = f$status)
+}
+if (has_codes) {
+  r4 <- r4_fit(d); r4_s1 <- r4_fit(s1)
+  tibble(Study = c("Study 2", "Study 1"), Status = ifelse(r4_registered, "registered", "exploratory"),
+         Trials = c(r4$n, r4_s1$n), `Denied, Knowledge` = fmt_pct(c(r4$rate_k, r4_s1$rate_k)),
+         `Denied, Recklessness` = fmt_pct(c(r4$rate_r, r4_s1$rate_r)), OR = c(r4$or, r4_s1$or),
+         `95% CI` = c(fmt_ci(r4$or_lo, r4$or_hi), fmt_ci(r4_s1$or_lo, r4_s1$or_hi)), p = fmt_p(c(r4$p, r4_s1$p)),
+         Model = c(r4$status, r4_s1$status)) %>% tbl("R4: awareness-denying justifications, Knowledge against Recklessness (percent denied)")
+} else {
+  r4 <- list(p = NA, b = NA); cat("The justification codes are not available yet, so R4 is not run.\n")
+}
+```
+
+## The R1 to R4 Holm family
+
+```{r r-family}
+# R4 belongs to the family only if it is run as registered (codes present and the
+# awareness-denied code reached kappa .60 on the check set); otherwise it is
+# reported as exploratory and the family is R1 to R3.
+r4_in_family <- has_codes && r4_registered
+fam <- tibble(Target = c("R1 distribution (adjusted chi-square)", "R2 slider coefficient", "R3 payment (features only)", "R4 Knowledge versus Recklessness denial"),
+              p = c(r1$p_adj, r2$p, r3$p, r4$p),
+              `Study 1 direction` = c(TRUE, r2$b > 0, r3$b > 0, isTRUE(r4$b > 0)),
+              `In family` = c(TRUE, TRUE, TRUE, r4_in_family))
+fam$`p (Holm)` <- NA_real_
+fam$`p (Holm)`[fam$`In family`] <- p.adjust(fam$p[fam$`In family`], "holm")
+fam <- fam %>%
+  mutate(
+         Replicated = ifelse(!`In family`, ifelse(has_codes, "exploratory (kappa below .60)", "not run"),
+                             ifelse(`p (Holm)` < .05 & `Study 1 direction`, "yes", "no")),
+         across(c(p, `p (Holm)`), fmt_p))
+tbl(fam, "Replication targets R1 to R4 (one Holm family)")
+```
+
+## R5: estimation targets
+
+The first target is the original-category Knowledge-minus-Recklessness slider difference from `lmer(slider ~ is_knowledge + (1 | pid))`, with d equal to the coefficient divided by the standard deviation of the slider ratings analyzed. The symmetric re-estimate removes trials with awareness-denying justifications from both categories. The second target is the share of Knowledge choices with a slider rating below 50. Neither target has a directional prediction.
+
+```{r r5}
+r5_fit <- function(x) {
+  xx <- x %>% filter(choice %in% c("Knowledge", "Recklessness"))
+  m <- suppressMessages(lmerTest::lmer(slider ~ is_knowledge + (1 | pid), data = xx))
+  cf <- summary(m)$coefficients["is_knowledge", ]; crit <- qt(.975, cf[["df"]])
+  list(n_k = sum(xx$is_knowledge), n_r = sum(1 - xx$is_knowledge), b = cf[["Estimate"]],
+       lo = cf[["Estimate"]] - crit * cf[["Std. Error"]], hi = cf[["Estimate"]] + crit * cf[["Std. Error"]],
+       p = cf[["Pr(>|t|)"]], d = cf[["Estimate"]] / sd(xx$slider))
+}
+r5_rows <- list(c(list(Study = "Study 2", Specification = "All trials"), r5_fit(d)),
+                c(list(Study = "Study 1", Specification = "All trials"), r5_fit(s1)))
+if (has_codes) {
+  r5_rows <- c(r5_rows,
+               list(c(list(Study = "Study 2", Specification = "Awareness-denying justifications removed from both"),
+                      r5_fit(d %>% filter(is.na(denied) | denied == 0))),
+                    c(list(Study = "Study 1", Specification = "Awareness-denying justifications removed from both"),
+                      r5_fit(s1 %>% filter(is.na(denied) | denied == 0)))))
+}
+r5 <- bind_rows(lapply(r5_rows, as_tibble)) %>%
+  mutate(`95% CI` = fmt_ci(lo, hi), `CI contains 0` = lo <= 0 & hi >= 0,
+         `CI contains -6.96` = lo <= -6.96 & hi >= -6.96, p = fmt_p(p))
+r5 %>% select(Study, Specification, `Knowledge trials` = n_k, `Recklessness trials` = n_r, b, `95% CI`, p, d,
+              `CI contains 0`, `CI contains -6.96`) %>% tbl("R5, first target: Knowledge minus Recklessness slider difference")
+
+r5_main <- r5 %>% filter(Study == "Study 2", Specification == "All trials")
+r5_fragile <- isTRUE(r5_main$`CI contains 0`)
+share_fit <- function(x, seed) {
+  kx <- x %>% filter(choice == "Knowledge"); pids <- sort(unique(as.character(kx$pid)))
+  W <- boot_counts(length(pids), B, seed)
+  r <- boot_ratio(kx, as.numeric(kx$slider < 50), rep(TRUE, nrow(kx)), W, pids)
+  c(est = r$est, lo = pct_ci(r$boot)[1], hi = pct_ci(r$boot)[2])
+}
+sh2 <- share_fit(d, 505); sh1 <- share_fit(s1, 506)
+tibble(Study = c("Study 2", "Study 1 (recomputed)", "Study 1 (registered value)"),
+       `Share of Knowledge choices below 50` = c(fmt_pct(sh2["est"]), fmt_pct(sh1["est"]), "41.4"),
+       `95% CI` = c(fmt_ci(100 * sh2["lo"], 100 * sh2["hi"], 1), fmt_ci(100 * sh1["lo"], 100 * sh1["hi"], 1), "[32.1, 50.7]")) %>%
+  tbl("R5, second target: low-slider share of Knowledge choices (percent, participant-cluster bootstrap)")
+```
+
+`r if (r5_fragile) "The CI for the Study 2 Knowledge-minus-Recklessness difference includes zero, so the Study 1 reversal is reported as fragile." else "The CI for the Study 2 Knowledge-minus-Recklessness difference excludes zero."`
+
+# Exploratory analyses (S1 to S11)
+
+These analyses are exploratory and were labeled so in the registration. Within an analysis with several tests, p values are Holm-adjusted. They can qualify how the confirmatory results are described, but they do not decide whether H1 or H2 is supported.
+
+## S1: Negligence and awareness
+
+```{r s1}
+neg <- boot_ratio(d, as.numeric(d$aware == "Yes"), d$choice == "Negligence", W_all, pids_all)
+neg_should <- boot_ratio(d, as.numeric(d$should == "Yes"), d$choice == "Negligence", W_all, pids_all)
+tibble(Measure = c("Negligence choices answered Yes to AWARE", "Negligence choices answered Yes to SHOULD"),
+       Trials = c(neg$n, neg_should$n), Percent = c(fmt_pct(neg$est), fmt_pct(neg_should$est)),
+       `95% CI` = c(fmt_ci(100 * pct_ci(neg$boot)[1], 100 * pct_ci(neg$boot)[2], 1),
+                    fmt_ci(100 * pct_ci(neg_should$boot)[1], 100 * pct_ci(neg_should$boot)[2], 1))) %>%
+  tbl("S1 (exploratory)")
+```
+
+## S2: agreement between measures
+
+```{r s2}
+xt <- table(Original = factor(d$choice, CATS), Probe = factor(d$probe_cat, CATS))
+tbl(as.data.frame.matrix(xt) %>% rownames_to_column("Original choice"), "S2 (exploratory): original category (rows) by probe-defined category (columns)")
+s2_agree <- mean(d$choice == d$probe_cat); s2_kw <- weighted_kappa_quadratic(d$choice, d$probe_cat, CATS)
+if (has_codes) {
+  kc <- d %>% filter(choice == "Knowledge", codable)
+  s2_agree_tbl <- bind_rows(
+    binary_agreement(kc$knowledge_stated == 1, kc$knew == "Yes") %>% mutate(Code = "Knew code vs KNEW Yes", .before = 1),
+    binary_agreement(kc$denied == 1, kc$knew == "No") %>% mutate(Code = "Awareness denied vs KNEW No", .before = 1),
+    binary_agreement(kc$act_only == 1, kc$knew == "No") %>% mutate(Code = "Act or situation only vs KNEW No", .before = 1)
+  ) %>% mutate(Status = ifelse(Code == "Awareness denied vs KNEW No" & !r4_registered, "below the kappa threshold", "")) %>%
+    tbl("S2 (exploratory): justification codes against the KNEW answer, Knowledge trials with codable justifications")
+  endorsed_low <- d %>% filter(choice == "Knowledge", low_slider == 1, knew == "Yes")
+  s2_codes_tbl <- endorsed_low %>% count(code) %>% mutate(percent = 100 * n / sum(n)) %>%
+    tbl(paste0("S2 (exploratory): codes of the ", nrow(endorsed_low), " low-slider Knowledge choices endorsed on the probe"), digits = 1)
+}
+if (has_codes) s2_agree_tbl
+if (has_codes) s2_codes_tbl
+```
+
+Percent agreement between the original and probe-defined categories is `r fmt_pct(s2_agree)`%, and the quadratic-weighted kappa is `r fmt_num(s2_kw)`.
+
+```{r s2-texts, results="asis"}
+if (has_codes && SRC == "real" && nrow(endorsed_low) > 0) {
+  cat("The justifications of the low-slider Knowledge choices endorsed on the probe:\n\n")
+  endorsed_low %>% select(participant, slider, code, justification) %>% tbl() %>% print()
+}
+```
+
+## S3: reading of the Knowledge option
+
+```{r s3}
+comp_dist <- function(pp, seed) {
+  set.seed(seed)
+  ans <- c("a", "b", "c", "d", "e")
+  boot <- replicate(B, { s <- sample(pp$comprehension_answer, replace = TRUE); table(factor(s, ans)) / length(s) })
+  est <- table(factor(pp$comprehension_answer, ans)) / nrow(pp)
+  tibble(Answer = ans, Percent = 100 * as.numeric(est),
+         `95% CI` = map_chr(1:5, ~ fmt_ci(100 * quantile(boot[.x, ], .025), 100 * quantile(boot[.x, ], .975), 1)))
+}
+labels_comp <- c(a = "a: act and situation", b = "b: aware of the contents", c = "c: intended to smuggle",
+                 d = "d: evidence strong enough", e = "e: something else")
+bind_cols(comp_dist(people %>% filter(comprehension_first == 1), 701) %>% rename(`Comprehension first, %` = Percent, `CI (first)` = `95% CI`),
+          comp_dist(people, 702) %>% select(`Full sample, %` = Percent, `CI (full)` = `95% CI`)) %>%
+  mutate(Answer = labels_comp[Answer]) %>% tbl("S3 (exploratory): comprehension answers", digits = 1)
+s3_data <- d %>% filter(choice == "Knowledge", comprehension_first == 1, comprehension_answer %in% c("a", "b")) %>%
+  mutate(act_reading = as.integer(comprehension_answer == "a"))
+s3 <- fit_glmer_rule(unendorsed ~ act_reading + (1 | pid), s3_data)
+if (!is.null(s3$model)) {
+  w <- wald_row(s3$model, "act_reading")
+  tibble(Trials = nrow(s3_data), People = n_distinct(s3_data$pid), OR = w$or, `95% CI` = fmt_ci(w$or_lo, w$or_hi), p = fmt_p(w$p),
+         Model = s3$status) %>% tbl("S3 (exploratory): unendorsement by reading, answer (a) against (b), comprehension-first participants")
+} else cat("S3 model:", s3$status, "\n")
+```
+
+The comprehension answer comes after the participant's own choices and may partly rationalize them, a limitation the registration says the manuscript will state.
+
+## S4: order of the comprehension item and the probe
+
+```{r s4}
+s4a <- fit_glmer_rule(unendorsed ~ comprehension_first + (1 | pid), k)
+s4b <- suppressWarnings(chisq.test(table(people$comprehension_first, factor(people$comprehension_answer, c("a", "b", "c", "d", "e")))))
+s4c <- fit_glmer_rule(unendorsed ~ low_slider * comprehension_first + (1 | pid), k)
+s4_rows <- tibble(
+  Test = c("Unendorsed Knowledge rate by order (OR, comprehension first)", "Comprehension answers by order (chi-square)", "Low slider by order interaction in the H1 model (OR)"),
+  Estimate = c(if (!is.null(s4a$model)) fmt_num(wald_row(s4a$model, "comprehension_first")$or) else s4a$status,
+               sprintf("chi-square(%d) = %s", s4b$parameter, fmt_num(s4b$statistic)),
+               if (!is.null(s4c$model)) fmt_num(wald_row(s4c$model, "low_slider:comprehension_first")$or) else s4c$status),
+  p = c(if (!is.null(s4a$model)) wald_row(s4a$model, "comprehension_first")$p else NA, s4b$p.value,
+        if (!is.null(s4c$model)) wald_row(s4c$model, "low_slider:comprehension_first")$p else NA)) %>%
+  mutate(`p (Holm within S4)` = p.adjust(p, "holm"), across(matches("^p($| \\()", ignore.case = FALSE), fmt_p))
+tbl(s4_rows, "S4 (exploratory)")
+rates_by_order <- k %>% group_by(Order = ifelse(comprehension_first == 1, "Comprehension first", "Probe first")) %>%
+  summarise(`Knowledge trials` = n(), `Unendorsed, %` = 100 * mean(unendorsed), .groups = "drop")
+tbl(rates_by_order, "S4: unendorsed Knowledge rate by order", digits = 1)
+```
+
+## S5: order and payment
+
+```{r s5}
+d1 <- d %>% filter(position == 1)
+m_s5a <- clm(culpability_f ~ source + package + inquiry + payment + location + contents, data = d1)
+m_s5b <- fit_clmm(culpability_f ~ source + package + inquiry + payment * position + location + contents + (1 | pid), d, "S5 interaction")
+c5a <- summary(m_s5a)$coefficients["payment", ]; c5b <- summary(m_s5b)$coefficients["payment:position", ]
+tibble(Test = c("Payment on position-1 trials (features-only ordinal model)", "Payment by position interaction (features-only mixed model)"),
+       b = c(c5a[["Estimate"]], c5b[["Estimate"]]), z = c(c5a[["z value"]], c5b[["z value"]]),
+       p = c(c5a[["Pr(>|z|)"]], c5b[["Pr(>|z|)"]])) %>%
+  mutate(`p (Holm within S5)` = p.adjust(p, "holm"), across(matches("^p($| \\()", ignore.case = FALSE), fmt_p)) %>%
+  tbl("S5 (exploratory); Study 1: b = 0.24 (p = .37) on position 1; interaction p = .04, Holm p = .24", digits = 3)
+```
+
+## S6: inquiry exposure
+
+```{r s6}
+d <- d %>% arrange(pid, position) %>% group_by(pid) %>%
+  mutate(asks = as.integer(inquiry == 0), prior_inquiry = cumsum(asks) - asks) %>% ungroup()
+non_inq <- d %>% filter(asks == 0); inq <- d %>% filter(asks == 1)
+s6_models <- list(
+  `Recklessness on non-inquiry trials (logistic)` = fit_glmer_rule(I(as.integer(choice == "Recklessness")) ~ prior_inquiry + position + (1 | pid), non_inq)$model,
+  `Culpability on non-inquiry trials (ordinal)` = fit_clmm(culpability_f ~ prior_inquiry + position + (1 | pid), non_inq, "S6 ordinal"),
+  `Culpability on non-inquiry trials, with slider (ordinal)` = fit_clmm(culpability_f ~ prior_inquiry + position + slider + (1 | pid), non_inq, "S6 ordinal with slider"),
+  `Placebo: culpability on inquiry trials (ordinal)` = fit_clmm(culpability_f ~ prior_inquiry + position + (1 | pid), inq, "S6 placebo"))
+map_dfr(names(s6_models), function(nm) {
+  m <- s6_models[[nm]]
+  if (is.null(m)) return(tibble(Model = paste(nm, "(model failed under both optimizers)"), b = NA, z = NA, p = NA))
+  cf <- summary(m)$coefficients["prior_inquiry", ]
+  tibble(Model = nm, b = cf[["Estimate"]], z = cf[["z value"]], p = cf[["Pr(>|z|)"]])
+}) %>% mutate(`p (Holm within S6)` = p.adjust(p, "holm"), across(matches("^p($| \\()", ignore.case = FALSE), fmt_p)) %>%
+  tbl("S6 (exploratory): prior inquiry exposure, controlling for position", digits = 3)
+```
+
+## S7: cognitive ability
+
+```{r s7}
+rate_k <- k %>% group_by(participant) %>% summarise(unendorsed_rate = mean(unendorsed), .groups = "drop")
+pp7 <- people %>% left_join(rate_k, by = "participant")
+t_a <- cor.test(pp7$rpm_score, pp7$tau); t_b <- cor.test(pp7$rpm_score, pp7$unendorsed_rate)
+tibble(Correlation = c("Raven's score with Kendall's tau (ranking)", "Raven's score with unendorsed Knowledge rate"),
+       People = c(sum(complete.cases(pp7$rpm_score, pp7$tau)), sum(complete.cases(pp7$rpm_score, pp7$unendorsed_rate))),
+       r = c(t_a$estimate, t_b$estimate), p = c(t_a$p.value, t_b$p.value)) %>%
+  mutate(`p (Holm within S7)` = p.adjust(p, "holm"), across(matches("^p($| \\()", ignore.case = FALSE), fmt_p)) %>%
+  tbl("S7 (exploratory); Study 1: Raven's with tau r = .15, p = .034", digits = 3)
+```
+
+## S8: jury and legal experience
+
+```{r s8}
+k8 <- k %>% mutate(jury = as.integer(jury_service == "Yes"), legal = as.integer(any_legal_training))
+d8 <- d %>% mutate(jury = as.integer(jury_service == "Yes"), legal = as.integer(any_legal_training))
+s8a <- fit_glmer_rule(unendorsed ~ jury + legal + (1 | pid), k8)
+s8b <- fit_clmm(culpability_f ~ slider * jury + slider * legal + (1 | pid), d8, "S8 slider slope")
+cb <- summary(s8b)$coefficients
+rows8 <- list()
+if (!is.null(s8a$model)) for (tm in c("jury", "legal")) { w <- wald_row(s8a$model, tm)
+  rows8[[length(rows8) + 1]] <- tibble(Test = paste("Unendorsed Knowledge rate:", tm), Estimate = w$b, p = w$p) }
+if (is.null(s8a$model)) rows8[[length(rows8) + 1]] <- tibble(Test = paste("Unendorsed Knowledge rate: model", s8a$status), Estimate = NA, p = NA)
+for (tm in c("slider:jury", "slider:legal")) rows8[[length(rows8) + 1]] <-
+  tibble(Test = paste("R2 slider slope:", tm), Estimate = cb[tm, "Estimate"], p = cb[tm, "Pr(>|z|)"])
+bind_rows(rows8) %>% mutate(`p (Holm within S8)` = p.adjust(p, "holm"), across(matches("^p($| \\()", ignore.case = FALSE), fmt_p)) %>%
+  tbl("S8 (exploratory): jury service and legal training as moderators (log-odds)", digits = 3)
+```
+
+## S9: shape of the slider distributions
+
+```{r s9}
+library(mclust)   # attached here only; detached at the end of this chunk (as in the Study 1 script)
+shape <- function(x) {
+  dt <- if (length(x) >= 4) dip.test(x) else list(statistic = NA, p.value = NA)
+  mc <- if (length(unique(x)) >= 5) tryCatch(Mclust(x, G = 1:3, modelNames = "V", verbose = FALSE), error = function(e) NULL) else NULL
+  tibble(Trials = length(x), `Dip statistic` = unname(dt$statistic), `Dip p` = dt$p.value,
+         `Mixture components (BIC)` = if (is.null(mc)) NA else mc$G,
+         `Component means` = if (is.null(mc)) NA else paste(round(mc$parameters$mean), collapse = ", "))
+}
+s9 <- bind_rows(
+  map_dfr(CATS, ~ shape(d$slider[d$choice == .x]) %>% mutate(Category = paste("Original:", .x), .before = 1)),
+  map_dfr(CATS, ~ shape(d$slider[d$probe_cat == .x]) %>% mutate(Category = paste("Probe-defined:", .x), .before = 1)))
+detach("package:mclust", unload = FALSE)
+s9 %>% mutate(`Dip p` = fmt_p(`Dip p`)) %>% tbl("S9 (descriptive): slider ratings within categories", digits = 3)
+g_s9 <- bind_rows(d %>% transmute(Classification = "Original choice", Category = choice, slider),
+                  d %>% transmute(Classification = "Probe-defined", Category = probe_cat, slider)) %>%
+  mutate(Category = factor(Category, CATS)) %>%
+  ggplot(aes(slider, fill = Category)) + geom_histogram(binwidth = 10, boundary = 0, colour = "white") +
+  facet_grid(Category ~ Classification) + labs(x = "Slider rating", y = "Trials", caption = data_label) +
+  theme_minimal(base_size = 11) + theme(legend.position = "none")
+save_dual(g_s9, "fig_s9_slider_by_category", height = 7)
+g_s9
+```
+
+## S10: features and element judgments
+
+```{r s10}
+m_s10 <- fit_clmm(probe_culp_f ~ source + package + inquiry + payment + location + contents + (1 | pid), d, "S10")
+bind_rows(feat_table(m_s10, "Probe-defined category (S10)"), feat_table(m_r3, "Original category (R3)")) %>%
+  filter(Feature == "payment") %>% mutate(across(c(p, `p (Holm, six features)`), fmt_p)) %>%
+  tbl("S10 (exploratory): payment effect on the probe-defined and the original category", digits = 3)
+```
+
+## S11: noise baselines and other categories
+
+```{r s11}
+mirror <- boot_ratio(d, as.numeric(d$knew == "Yes"), d$choice %in% c("Recklessness", "Blamelessness"), W_all, pids_all)
+r_unend <- boot_ratio(d, as.numeric(d$aware == "No"), d$choice == "Recklessness", W_all, pids_all)
+kr11 <- d %>% filter(choice %in% c("Knowledge", "Recklessness")) %>%
+  mutate(unend_any = ifelse(choice == "Knowledge", as.integer(knew == "No"), as.integer(aware == "No")))
+s11 <- fit_glmer_rule(unend_any ~ is_knowledge + (1 | pid), kr11)
+w11 <- if (!is.null(s11$model)) wald_row(s11$model, "is_knowledge") else NULL
+bl80 <- sum(d$choice == "Blamelessness" & d$slider >= 80); bl <- sum(d$choice == "Blamelessness")
+tibble(Measure = c("Mirror inconsistencies: Recklessness or Blamelessness answered Yes to KNEW",
+                   "Recklessness answered No to AWARE",
+                   "Unendorsed Knowledge (KNEW No) against unendorsed Recklessness (AWARE No): OR",
+                   "Blamelessness choices with a slider rating of 80 or above (Study 1: 3 of 177)"),
+       Value = c(paste0(fmt_pct(mirror$est), "% ", fmt_ci(100 * pct_ci(mirror$boot)[1], 100 * pct_ci(mirror$boot)[2], 1)),
+                 paste0(fmt_pct(r_unend$est), "% ", fmt_ci(100 * pct_ci(r_unend$boot)[1], 100 * pct_ci(r_unend$boot)[2], 1)),
+                 if (is.null(w11)) s11$status else paste0(fmt_num(w11$or), " ", fmt_ci(w11$or_lo, w11$or_hi), ", p ", fmt_p(w11$p)),
+                 sprintf("%d of %d", bl80, bl))) %>%
+  tbl("S11 (exploratory)")
+```
+
+# Robustness check: the first 200 completions
+
+The registration stops collection at 200 completed sessions; 271 were completed, and the primary analyses use the full sample. This section repeats H1, H2 and V1 on the first 200 completions, `r sum(people$first_200)` people after exclusions, the sample the stopping rule implies. It is not a registered analysis.
+
+```{r first-200}
+d200 <- d %>% filter(first_200)
+a200 <- run_h1(d200 %>% filter(choice == "Knowledge"), B = B, seed = 121)
+rows200 <- list(tibble(Test = "H1", Trials = a200$n_trials,
+  Estimate = if (a200$fallback) sprintf("difference %s points", fmt_pct(a200$diff)) else sprintf("OR %s", fmt_num(a200$or)),
+  p = fmt_p(a200$p), `Agrees with primary` = ifelse(isTRUE(a200$p < .05 && a200$estimate_positive) == h1_supported, "yes", "NO")))
+if (has_codes) {
+  b200 <- run_h2(d200 %>% filter(choice == "Knowledge", slider < 50, codable), B = B, seed = 222)
+  rows200[[2]] <- tibble(Test = "H2", Trials = b200$n_trials, Estimate = sprintf("OR %s", fmt_num(b200$or)), p = fmt_p(b200$p),
+                         `Agrees with primary` = ifelse(isTRUE(b200$p < .05 && b200$estimate_negative) == h2_supported, "yes", "NO"))
+}
+v200 <- run_v1(d200 %>% filter(choice %in% c("Recklessness", "Negligence"), probe_cat %in% c("Knowledge", "Recklessness")))
+rows200[[length(rows200) + 1]] <- tibble(Test = "V1", Trials = v200$n_trials, Estimate = sprintf("b %s", fmt_num(v200$b)),
+  p = fmt_p(v200$p), `Agrees with primary` = ifelse(isTRUE(v200$b > 0 && v200$p < .05) == v1_pass, "yes", "NO"))
+tbl(bind_rows(rows200), "H1, H2 and V1 on the first 200 completions")
+```
+
+# Model notes
+
+```{r model-notes}
+if (length(model_notes$rows)) bind_rows(model_notes$rows) %>% tbl("Refits and estimation problems in the ordinal models") else
+  cat("Every cumulative link mixed model returned finite standard errors on the first fit.\n")
+```
+
+# Deviations from the registration
+
+```{r deviations}
+tribble(
+  ~`Registered plan`, ~`What was done`,
+  "Collection stops at 200 completed sessions", "271 sessions were completed. The primary analyses use the full sample (262 after exclusions); the first 200 completions (193 after exclusions) are a robustness check. The choice was made before any outcome was seen.",
+  "Analysis script written, tested on simulated data and posted with the registration, before collection", "Written after collection, built and tested on two masked data sets that carry no Study 2 outcome (simulated data with known effects, and the real design with simulated outcomes), frozen and committed to the lab's GitHub repository before the single run on the real data.",
+  "Coding protocol frozen and posted before Study 2 collection", "Frozen after collection and before any Study 2 justification was coded, and committed to the lab's GitHub repository before the check set was scored.",
+  "The OSF project holds the experiment code, the analysis script, the coding protocol and the de-identified data from both studies", "All of these are in the lab's GitHub repository instead; the lab does not post data on OSF.",
+  "Language model at a dated, pinned model version, run at temperature 0", "Claude Opus 4.6 (claude-opus-4-6) at temperature 0. Its identifier carries no date: from the 4.6 generation on, each Anthropic model identifier names one fixed snapshot. Newer Claude models reject any temperature setting.",
+  "Prolific filters: approval rate of at least 95%", "Approval rate of 98 to 100% and at least 50 previous submissions.",
+  "Payment of $5.00 for an estimated 25 minutes", "$2.00 for an estimated 10 minutes; Prolific's median time was 16.3 minutes.",
+  "No automatic rejection of fast submissions", "Prolific's automatic rejection of exceptionally fast submissions was on; it rejected nobody.",
+  "Technical pilot of at most 10 lab sessions, data deleted", "Lab test sessions were deleted; the first Prolific batch of 15 is included in the data."
+) %>% tbl("Deviations (to be completed and checked before submission)")
+```
+
+# Session information
+
+```{r session}
+sessionInfo()
+```

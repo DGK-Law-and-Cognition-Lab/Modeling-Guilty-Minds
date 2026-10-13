@@ -1,0 +1,44 @@
+{
+  "frozen_at": "2026-10-08T22:29:39+00:00",
+  "model": "claude-opus-4-6",
+  "temperature": 0,
+  "max_tokens": 50,
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "enum": [
+          "Knew",
+          "Suspected",
+          "Unaware, at fault",
+          "Unaware, no fault",
+          "Act or situation only",
+          "Evidentiary",
+          "Uncodable"
+        ]
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "additionalProperties": false
+  },
+  "user_message_template": "<defendant>{name}</defendant>\n<justification>{text}</justification>",
+  "text_preparation": "Leading and trailing white space is removed from each justification; nothing else is changed.",
+  "invalid_response_rule": "A response that cannot be read as one of the seven codes (a refusal, an answer cut off at the token limit, or a label outside the list) is coded Uncodable and counted.",
+  "system_prompt_sha256": "2138db8f83896ce092e8ede9ae17294a9b75c22f0921638a708e8aa2d1b7813d",
+  "prompt_template_sha256": "6698f2f6ac086c8216616e837119cd13aa4b297485cd91b800f1264c42bca348",
+  "examples_sha256": "1c259490204fee2b1ecb2505143ff821f01ceca0f0a24450fae14326986af0d1",
+  "check_set_key_sha256": "3e3f3a185b731cd40eb6def2b9b8427c9d878bf7186930b2f3caf83437af8571",
+  "hand_codes_sha256": "7afc4cc498b1e9a818cf590d7c572798e845217471639fdd968c6233fca82705",
+  "nli_model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",
+  "nli_revision": "b3546ea6b0346eb6f8d5d68b13c7dc6d0376b3d7",
+  "nli_premise": "{name} is the defendant. {text}",
+  "nli_hypotheses": [
+    "{name} did not know that the package contained illicit material",
+    "{name} did not suspect that the package might contain illicit material"
+  ],
+  "nli_rule": "Awareness denied when entailment is the most probable label for either hypothesis.",
+  "anthropic_sdk": "1.12.1"
+}

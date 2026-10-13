@@ -1,0 +1,741 @@
+---
+title: "Modeling Guilty Minds: Combined Results for the Revision"
+subtitle: "Studies 1 and 2"
+author: "David G. Kamper, Andrew Bistras, Jaime Castrellon"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: hide
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center", cache = FALSE)
+```
+
+```{r packages}
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(readr); library(purrr); library(stringr); library(tibble)
+  library(ggplot2); library(lme4); library(lmerTest); library(ordinal)
+  library(knitr); library(kableExtra); library(jsonlite)
+})
+source("R/study2_functions.R")
+CATS <- c("Blamelessness", "Negligence", "Recklessness", "Knowledge")
+FEATURES <- c("source", "package", "inquiry", "payment", "location", "contents")
+# The registered number of resamples. With the registered seeds, every bootstrap interval below that
+# also appears in the registered report is identical to it.
+B <- 5000
+OUT <- "output/combined"; FIG <- file.path(OUT, "figures"); TAB <- file.path(OUT, "tables")
+dir.create(FIG, recursive = TRUE, showWarnings = FALSE); dir.create(TAB, recursive = TRUE, showWarnings = FALSE)
+NLP <- "output/nlp"
+
+tbl <- function(x, caption = NULL, digits = 2, ...) {
+  kbl(x, caption = caption, digits = digits, ...) %>%
+    kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+}
+```
+
+```{r helpers}
+# ---- Number formats for the manuscript ---------------------------------------
+# APA style: no leading zero for values that cannot exceed 1, a true minus sign.
+minus <- function(s) sub("^-", "\u2212", s)
+num  <- function(x, d = 2) minus(formatC(round(x, d), format = "f", digits = d))
+apa  <- function(x, d = 2) minus(sub("^(-?)0\\.", "\\1.", formatC(round(x, d), format = "f", digits = d)))
+ci   <- function(lo, hi, d = 2) paste0("[", num(lo, d), ", ", num(hi, d), "]")
+pct  <- function(x, d = 1) num(100 * x, d)
+pci  <- function(lo, hi, d = 1) ci(100 * lo, 100 * hi, d)
+pval <- function(p) ifelse(p < .001, "< .001", paste0("= ", apa(p, 3)))
+or_txt <- function(or, lo, hi) paste(num(or), ci(lo, hi))
+
+# ---- LaTeX tables in the style of the Study 1 tables (booktabs, a Note below) --------
+to_tex <- function(s) {
+  s <- gsub("([%&#_{}$])", "\\\\\\1", s)
+  s <- gsub("\u2212", "$-$", s, fixed = TRUE)
+  s <- gsub("<", "$<$", s, fixed = TRUE); s <- gsub(">", "$>$", s, fixed = TRUE)
+  s <- gsub("|", "$|$", s, fixed = TRUE)
+  s <- gsub("\u00b1", "$\\pm$", s, fixed = TRUE)
+  s <- gsub("\u03ba", "$\\kappa$", s, fixed = TRUE); s <- gsub("\u03c1", "$\\rho$", s, fixed = TRUE)
+  s <- gsub("\u03c7\u00b2", "$\\chi^2$", s, fixed = TRUE)
+  s <- gsub("\\*([^*]+)\\*", "\\\\textit{\\1}", s)       # *p* marks a statistical symbol: italic
+  s
+}
+plain <- function(s) gsub("\\*([^*]+)\\*", "\\1", s)            # the same text without the italics marks
+# A row whose first cell starts with "## " becomes an italic group heading across the table.
+write_tex <- function(df, file, caption, label, note, align = NULL, size = "\\small") {
+  m <- as.matrix(df); m[is.na(m)] <- ""
+  if (is.null(align)) align <- paste0("l", strrep("r", ncol(m) - 1))
+  specs <- regmatches(align, gregexpr("p\\{[^}]*\\}|[lcr]", align))[[1]]
+  ragged <- startsWith(specs, "p{")        # paragraph columns are set ragged right
+  rows <- vapply(seq_len(nrow(m)), function(i) {
+    if (startsWith(m[i, 1], "## "))
+      return(sprintf("\\addlinespace\n\\multicolumn{%d}{l}{\\textit{%s}} \\tabularnewline", ncol(m), to_tex(sub("^## ", "", m[i, 1]))))
+    cells <- vapply(m[i, ], to_tex, "")
+    cells[ragged] <- paste0("\\raggedright ", cells[ragged])
+    paste0(paste(cells, collapse = " & "), " \\tabularnewline")
+  }, "")
+  lines <- c("\\begin{table}[H]", "\\centering", sprintf("\\caption{%s}", to_tex(caption)),
+             sprintf("\\label{%s}", label), size, sprintf("\\begin{tabular}{%s}", align), "\\toprule",
+             paste0(paste(vapply(colnames(m), to_tex, ""), collapse = " & "), " \\\\"), "\\midrule",
+             rows, "\\bottomrule", "\\end{tabular}", "", "\\vspace{0.5em}", "\\begin{flushleft}",
+             "\\footnotesize", paste0("\\textit{Note.} ", to_tex(note)), "\\end{flushleft}", "\\end{table}")
+  writeLines(lines, file.path(TAB, file))
+  write_csv(df %>% mutate(across(everything(), plain)), file.path(TAB, sub("\\.tex$", ".csv", file)))
+  invisible(file.path(TAB, file))
+}
+show_tex <- function(df, caption) {
+  df %>% mutate(across(everything(), ~ gsub("\\*([^*]+)\\*", "<i>\\1</i>", .x)),
+                across(1, ~ ifelse(startsWith(.x, "## "), paste0("<i>", sub("^## ", "", .x), "</i>"), .x))) %>%
+    kbl(caption = caption, escape = FALSE) %>% kable_styling(bootstrap_options = c("condensed"), full_width = FALSE)
+}
+
+# ---- Figures: designed in grayscale, so one version serves print and screen ---------------
+theme_ms <- theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
+        strip.text = element_text(face = "bold", hjust = 0), legend.position = "bottom")
+save_fig <- function(g, name, width, height) {
+  ggsave(file.path(FIG, paste0(name, ".pdf")), g, width = width, height = height)
+  invisible(file.path(FIG, paste0(name, ".pdf")))
+}
+```
+
+# About this report
+
+This report gathers the results the revised manuscript reports for both studies and writes the manuscript's tables, as LaTeX in the style of the Study 1 tables and as CSV, and its new figures. It runs after the registered analysis (`MPC_Study2_Analysis.Rmd`) and the machine learning notebook (`05_nlp_study2.ipynb`), and it changes neither.
+
+It has three sources. The registered Study 2 results it tabulates are recomputed here with the frozen functions file (`R/study2_functions.R`) and the same code and seeds as the registered script, and Section 3 checks each one against the frozen report of October 8. The one slow part of the registered analysis, the 5,000-refit bootstrap of the H1 odds ratio, is not repeated, because the manuscript reports H1 by its rates. The machine learning results are read from `output/nlp`, the files the notebook wrote in its Colab run of October 9. Finally, two numbers the response letter needs are computed here for the first time: the share of Study 2 participants who ranked the four categories in the Code's order (Reviewer 1, point 5), and the Study 1 counterpart of the inquiry-carryover analysis (Reviewer 2, point 3). Both are exploratory.
+
+Throughout, the slider is called the belief rating, because in both studies it asked what the defendant believed was the chance that illicit material was in the package. The category chosen from the four options is the choice, and the probe-defined category is the highest state the participant affirmed on the three element questions (Knowledge if he knew, otherwise Recklessness if he was aware of a substantial risk, otherwise Negligence if he should have been, otherwise Blamelessness).
+
+# Data
+
+```{r files}
+f_trials <- "data/processed/study2_trials.csv"; f_people <- "data/processed/study2_participants.csv"
+f_codes <- "data/processed/justification_codes.csv"; f_s1 <- "data/study1_trials.csv"
+needed <- c(f_trials, f_people, f_codes, f_s1)
+if (!all(file.exists(needed))) stop("Missing: ", paste(needed[!file.exists(needed)], collapse = ", "),
+                                    ". Run this report from the study2_analysis folder after the registered analysis.")
+nlp_files <- c("rf_cv_accuracy.csv", "rf_paired_tests.csv", "shap_top_features.csv", "shap_bootstrap_rank_first.csv",
+               "shap_bootstrap_knowledge.csv", "knowledge_rates_by_feature.csv", "rsa.csv", "text_classification.csv",
+               "text_classification_balanced.csv", "combined_models.csv", "topics_minilm.csv", "topics_minilm_codes.csv",
+               "vignette_means_correlations.csv", "session_info.txt")
+has_nlp <- all(file.exists(file.path(NLP, nlp_files)))
+tibble(File = c(needed, file.path(NLP, nlp_files)),
+       Present = file.exists(c(needed, file.path(NLP, nlp_files)))) %>% tbl("Input files")
+```
+
+```{r load}
+# The same reading and derivations as the registered script ("Data" section).
+people <- read_csv(f_people, show_col_types = FALSE) %>%
+  mutate(pid = participant, comprehension_first = as.integer(as.logical(comprehension_first)),
+         first_200 = as.logical(first_200), any_legal_training = as.logical(any_legal_training),
+         tau = ranking_tau(ranking))
+trials <- read_csv(f_trials, col_types = cols(vignette_id = col_character(), .default = col_guess()),
+                   show_col_types = FALSE) %>%
+  mutate(vignette_id = str_pad(vignette_id, 6, pad = "0"), first_200 = as.logical(first_200))
+codes <- read_csv(f_codes, show_col_types = FALSE)
+codes2 <- codes %>% filter(study == 2); codes1 <- codes %>% filter(study == 1)
+add_codes <- function(d, codes) {
+  d %>% mutate(vignette_position = as.integer(vignette_position)) %>%
+    left_join(codes %>% transmute(participant = as.character(participant),
+                                  vignette_position = as.integer(vignette_position), code, nli_denied),
+              by = c("participant", "vignette_position"))
+}
+d <- trials %>%
+  add_codes(codes2) %>%
+  left_join(people %>% select(participant, comprehension_first, eligibility, jury_service,
+                              any_legal_training, comprehension_answer, rpm_score, tau),
+            by = "participant") %>%
+  mutate(pid = factor(participant), position = vignette_position,
+         culpability = match(choice, CATS), culpability_f = factor(culpability, levels = 1:4, ordered = TRUE),
+         is_knowledge = as.integer(choice == "Knowledge"), low_slider = as.integer(slider < 50),
+         slider_c = (slider - 25) / 10, unendorsed = as.integer(knew == "No"),
+         probe_cat = probe_category(knew, aware, should),
+         probe_culp_f = factor(match(probe_cat, CATS), levels = 1:4, ordered = TRUE),
+         probe_knowledge = as.integer(probe_cat == "Knowledge"),
+         codable = !is.na(code) & code != "Uncodable",
+         denied = ifelse(codable, as.integer(code %in% c("Unaware, at fault", "Unaware, no fault")), NA_integer_))
+stopifnot(!any(is.na(d$code)), all(table(d$participant) == 5))
+
+s1_raw <- read_csv(f_s1, col_types = cols(.default = col_character()), show_col_types = FALSE)
+keep1 <- s1_raw %>% count(session_id) %>% filter(n == 5) %>% pull(session_id)
+s1 <- s1_raw %>%
+  filter(session_id %in% keep1) %>%
+  transmute(participant = session_id, vignette_position = as.integer(vignette_position),
+            vignette_id = str_pad(vignette_id, 6, pad = "0"), choice = judgment,
+            slider = as.numeric(slider_value), source_lab = source)
+bits1 <- do.call(rbind, lapply(strsplit(s1$vignette_id, ""), as.integer)); colnames(bits1) <- FEATURES
+s1 <- bind_cols(s1, as_tibble(bits1)) %>%
+  add_codes(codes1) %>%
+  mutate(pid = factor(participant), position = vignette_position, culpability = match(choice, CATS),
+         culpability_f = factor(culpability, levels = 1:4, ordered = TRUE),
+         is_knowledge = as.integer(choice == "Knowledge"),
+         codable = !is.na(code) & code != "Uncodable",
+         denied = ifelse(codable, as.integer(code %in% c("Unaware, at fault", "Unaware, no fault")), NA_integer_))
+stopifnot(nrow(s1) == 1060, all((s1$source_lab == "biker") == (s1$source == 1)))
+people1 <- s1_raw %>% filter(session_id %in% keep1) %>% group_by(session_id) %>%
+  summarise(ranking = first(mpc_ranking), rankings = n_distinct(mpc_ranking), .groups = "drop") %>%
+  mutate(tau = ranking_tau(ranking))
+stopifnot(all(people1$rankings == 1))
+```
+
+Study 2 contributes `r nrow(people)` people and `r nrow(d)` trials (the full sample, the registered analysis's primary sample), and Study 1 `r nrow(people1)` people and `r nrow(s1)` trials.
+
+# Agreement with the registered report
+
+Every registered Study 2 number that the tables below use is recomputed here and set beside the value printed in the frozen report (`output/MPC_Study2_Analysis_real.html`, October 8), formatted the same way. A mismatch would mean that the data or the code differ from the frozen run.
+
+```{r registered}
+k <- d %>% filter(choice == "Knowledge")
+h1 <- run_h1(k, B = B, seed = 101)                                   # rates, intervals and the registered test
+v <- d %>% filter(choice %in% c("Recklessness", "Negligence"), probe_cat %in% c("Knowledge", "Recklessness"))
+v1 <- run_v1(v)
+pids_all <- levels(d$pid); W_all <- boot_counts(length(pids_all), B, seed = 303)
+pk <- boot_ratio(d, d$slider, d$probe_cat == "Knowledge", W_all, pids_all)
+pr <- boot_ratio(d, d$slider, d$probe_cat == "Recklessness", W_all, pids_all)
+c1 <- pk$boot - pr$boot
+
+r1_fit <- function(x) {
+  obs <- table(factor(x$choice, CATS)); n <- sum(obs)
+  ct <- suppressWarnings(chisq.test(obs, p = rep(.25, 4)))
+  deff <- compute_deff(compute_icc(x$culpability, x$pid)); adj <- unname(ct$statistic) / deff
+  list(obs = obs, pct = as.numeric(obs) / n, chi_adj = adj, p_adj = pchisq(adj, 3, lower.tail = FALSE),
+       w = sqrt(unname(ct$statistic) / n))
+}
+r1 <- r1_fit(d); r1_s1 <- r1_fit(s1)
+r2_fit <- function(x) {
+  m <- fit_clmm(culpability_f ~ slider + (1 | pid), data = x, label = "R2")
+  cf <- summary(m)$coefficients["slider", ]
+  list(b = cf[["Estimate"]], p = cf[["Pr(>|z|)"]], or10 = exp(10 * cf[["Estimate"]]),
+       or10_ci = exp(10 * (cf[["Estimate"]] + c(-1, 1) * qnorm(.975) * cf[["Std. Error"]])))
+}
+r2 <- r2_fit(d); r2_s1 <- r2_fit(s1)
+f_feat <- culpability_f ~ source + package + inquiry + payment + location + contents + (1 | pid)
+feat_or <- function(m, feature) {
+  cf <- summary(m)$coefficients[feature, ]
+  list(b = cf[["Estimate"]], p = cf[["Pr(>|z|)"]], or = exp(cf[["Estimate"]]),
+       lo = exp(cf[["Estimate"]] - qnorm(.975) * cf[["Std. Error"]]),
+       hi = exp(cf[["Estimate"]] + qnorm(.975) * cf[["Std. Error"]]))
+}
+m_r3 <- fit_clmm(f_feat, d, "R3 Study 2"); m_r3_s1 <- fit_clmm(f_feat, s1, "R3 Study 1")
+pay2 <- feat_or(m_r3, "payment"); pay1 <- feat_or(m_r3_s1, "payment")
+src2 <- feat_or(m_r3, "source"); src1 <- feat_or(m_r3_s1, "source")
+r4_fit <- function(x) {
+  xx <- x %>% filter(choice %in% c("Knowledge", "Recklessness"), codable)
+  f <- fit_glmer_rule(denied ~ is_knowledge + (1 | pid), xx); w <- wald_row(f$model, "is_knowledge")
+  list(n = nrow(xx), rate_k = mean(xx$denied[xx$is_knowledge == 1]), rate_r = mean(xx$denied[xx$is_knowledge == 0]),
+       or = w$or, or_lo = w$or_lo, or_hi = w$or_hi, b = w$b, p = w$p)
+}
+r4 <- r4_fit(d); r4_s1 <- r4_fit(s1)
+fam_p <- p.adjust(c(r1$p_adj, r2$p, pay2$p, r4$p), "holm")
+replicated <- fam_p < .05 & c(TRUE, r2$b > 0, pay2$b > 0, r4$b > 0)
+r5_fit <- function(x) {
+  xx <- x %>% filter(choice %in% c("Knowledge", "Recklessness"))
+  m <- suppressMessages(lmerTest::lmer(slider ~ is_knowledge + (1 | pid), data = xx))
+  cf <- summary(m)$coefficients["is_knowledge", ]; crit <- qt(.975, cf[["df"]])
+  list(b = cf[["Estimate"]], lo = cf[["Estimate"]] - crit * cf[["Std. Error"]],
+       hi = cf[["Estimate"]] + crit * cf[["Std. Error"]], p = cf[["Pr(>|t|)"]], d = cf[["Estimate"]] / sd(xx$slider))
+}
+r5_2 <- r5_fit(d); r5_1 <- r5_fit(s1)
+r5_2n <- r5_fit(d %>% filter(is.na(denied) | denied == 0)); r5_1n <- r5_fit(s1 %>% filter(is.na(denied) | denied == 0))
+share_fit <- function(x, seed) {
+  kx <- x %>% filter(choice == "Knowledge"); pids <- sort(unique(as.character(kx$pid)))
+  W <- boot_counts(length(pids), B, seed)
+  r <- boot_ratio(kx, as.numeric(kx$slider < 50), rep(TRUE, nrow(kx)), W, pids)
+  c(est = r$est, lo = pct_ci(r$boot)[1], hi = pct_ci(r$boot)[2])
+}
+sh2 <- share_fit(d, 505); sh1 <- share_fit(s1, 506)
+neg <- boot_ratio(d, as.numeric(d$aware == "Yes"), d$choice == "Negligence", W_all, pids_all)
+neg_should <- boot_ratio(d, as.numeric(d$should == "Yes"), d$choice == "Negligence", W_all, pids_all)
+comp_dist <- function(pp, seed) {
+  set.seed(seed)
+  ans <- c("a", "b", "c", "d", "e")
+  boot <- replicate(B, { s <- sample(pp$comprehension_answer, replace = TRUE); table(factor(s, ans)) / length(s) })
+  est <- table(factor(pp$comprehension_answer, ans)) / nrow(pp)
+  tibble(Answer = ans, est = as.numeric(est), lo = apply(boot, 1, quantile, .025), hi = apply(boot, 1, quantile, .975))
+}
+s3 <- comp_dist(people, 702)
+m_s10 <- fit_clmm(probe_culp_f ~ source + package + inquiry + payment + location + contents + (1 | pid), d, "S10")
+pay_probe <- feat_or(m_s10, "payment")
+r_unend <- boot_ratio(d, as.numeric(d$aware == "No"), d$choice == "Recklessness", W_all, pids_all)
+mirror <- boot_ratio(d, as.numeric(d$knew == "Yes"), d$choice %in% c("Recklessness", "Blamelessness"), W_all, pids_all)
+t7 <- cor.test(people$rpm_score, people$tau)
+slider_means <- d %>% group_by(choice = factor(choice, CATS)) %>% summarise(m = mean(slider), .groups = "drop")
+
+# S6, the inquiry-carryover analysis, exactly as registered; used for Study 2 here and for Study 1 in Section 4.
+s6_run <- function(x) {
+  x <- x %>% arrange(pid, position) %>% group_by(pid) %>%
+    mutate(asks = as.integer(inquiry == 0), prior_inquiry = cumsum(asks) - asks) %>% ungroup()
+  non_inq <- x %>% filter(asks == 0); inq <- x %>% filter(asks == 1)
+  models <- list(
+    `Recklessness on non-inquiry trials (logistic)` =
+      fit_glmer_rule(I(as.integer(choice == "Recklessness")) ~ prior_inquiry + position + (1 | pid), non_inq)$model,
+    `Culpability on non-inquiry trials (ordinal)` =
+      fit_clmm(culpability_f ~ prior_inquiry + position + (1 | pid), non_inq, "S6 ordinal"),
+    `Culpability on non-inquiry trials, with belief rating (ordinal)` =
+      fit_clmm(culpability_f ~ prior_inquiry + position + slider + (1 | pid), non_inq, "S6 ordinal with slider"),
+    `Placebo: culpability on inquiry trials (ordinal)` =
+      fit_clmm(culpability_f ~ prior_inquiry + position + (1 | pid), inq, "S6 placebo"))
+  map_dfr(names(models), function(nm) {
+    m <- models[[nm]]
+    if (is.null(m)) return(tibble(Model = paste(nm, "(model failed under both optimizers)"), b = NA_real_, z = NA_real_, p = NA_real_))
+    cf <- summary(m)$coefficients["prior_inquiry", ]
+    tibble(Model = nm, b = cf[["Estimate"]], z = cf[["z value"]], p = cf[["Pr(>|z|)"]])
+  }) %>% mutate(`p (Holm within S6)` = p.adjust(p, "holm"), trials_non_inquiry = nrow(non_inq), trials_inquiry = nrow(inq))
+}
+s6_2 <- s6_run(d)
+```
+
+```{r checks}
+fmt3 <- function(x) formatC(x, format = "f", digits = 3)
+checks <- tribble(
+  ~Quantity, ~`Registered report`, ~`This report`,
+  "H1: Knowledge trials (people)", "133 (86)", sprintf("%d (%d)", h1$n_trials, h1$n_people),
+  "H1: unendorsed, all Knowledge choices", "61.7% [50.4, 72.5]", paste0(fmt_pct(h1$rate_all), "% ", fmt_ci(100 * h1$rate_all_ci[1], 100 * h1$rate_all_ci[2], 1)),
+  "H1: unendorsed, slider below 50", "83.3% [66.7, 95.7]", paste0(fmt_pct(h1$rate_low), "% ", fmt_ci(100 * h1$rate_low_ci[1], 100 * h1$rate_low_ci[2], 1)),
+  "H1: unendorsed, slider 50 or above", "49.4% [35.7, 62.5]", paste0(fmt_pct(h1$rate_high), "% ", fmt_ci(100 * h1$rate_high_ci[1], 100 * h1$rate_high_ci[2], 1)),
+  "H1: difference in rates", "33.9 points [13.5, 52.6]", paste0(fmt_pct(h1$diff), " points ", fmt_ci(100 * h1$diff_ci[1], 100 * h1$diff_ci[2], 1)),
+  "H1: odds ratio [model CI]", "65.36 [3.21, > 1000]", paste(fmt_num(h1$or), fmt_or_ci(h1$or_lo, h1$or_hi)),
+  "H1: p (registered test)", "= .007", fmt_p(h1$p),
+  "V1: b [95% CI]", "11.83 [6.26, 17.40]", paste(fmt_num(v1$b), fmt_ci(v1$ci[1], v1$ci[2])),
+  "V1: d", "0.38", fmt_num(v1$d),
+  "V1: probe Knowledge minus probe Recklessness, all trials", "13.25 [6.51, 19.89]", paste(fmt_num(pk$est - pr$est), fmt_ci(pct_ci(c1)[1], pct_ci(c1)[2])),
+  "Mean slider by choice (B, N, R, K)", "19.65, 32.19, 60.85, 53.93", paste(fmt_num(slider_means$m), collapse = ", "),
+  "R1: Study 2 counts (B, N, R, K)", "158, 643, 376, 133", paste(as.integer(r1$obs), collapse = ", "),
+  "R1: Study 2 adjusted chi-square and w", "291.44; 0.63", paste0(fmt_num(r1$chi_adj), "; ", fmt_num(r1$w)),
+  "R1: Study 1 adjusted chi-square and w", "131.67; 0.45", paste0(fmt_num(r1_s1$chi_adj), "; ", fmt_num(r1_s1$w)),
+  "R2: Study 2 OR per 10 points [CI]", "1.541 [1.46, 1.63]", paste(fmt3(r2$or10), fmt_ci(r2$or10_ci[1], r2$or10_ci[2])),
+  "R2: Study 1 OR per 10 points [CI]", "1.582 [1.49, 1.68]", paste(fmt3(r2_s1$or10), fmt_ci(r2_s1$or10_ci[1], r2_s1$or10_ci[2])),
+  "R3: payment OR, Study 2 and Study 1", "5.851; 2.960", paste0(fmt3(pay2$or), "; ", fmt3(pay1$or)),
+  "R3: source OR, Study 2 and Study 1", "2.176; 1.982", paste0(fmt3(src2$or), "; ", fmt3(src1$or)),
+  "R4: Study 2 denial rates, OR [CI] and p", "40.8 vs 33.6; 1.33 [0.69, 2.57]; = .397",
+    paste0(fmt_pct(r4$rate_k), " vs ", fmt_pct(r4$rate_r), "; ", fmt_num(r4$or), " ", fmt_ci(r4$or_lo, r4$or_hi), "; ", fmt_p(r4$p)),
+  "R4: Study 1 denial rates, OR [CI] and p", "39.6 vs 35.8; 1.62 [0.90, 2.90]; = .106",
+    paste0(fmt_pct(r4_s1$rate_k), " vs ", fmt_pct(r4_s1$rate_r), "; ", fmt_num(r4_s1$or), " ", fmt_ci(r4_s1$or_lo, r4_s1$or_hi), "; ", fmt_p(r4_s1$p)),
+  "R5: Study 2 K minus R [CI]", "-2.14 [-6.91, 2.63]", paste(fmt_num(r5_2$b), fmt_ci(r5_2$lo, r5_2$hi)),
+  "R5: Study 1 K minus R [CI]", "-6.96 [-11.42, -2.49]", paste(fmt_num(r5_1$b), fmt_ci(r5_1$lo, r5_1$hi)),
+  "R5: Study 2, denials removed [CI]", "-0.22 [-5.73, 5.29]", paste(fmt_num(r5_2n$b), fmt_ci(r5_2n$lo, r5_2n$hi)),
+  "R5: Study 1, denials removed [CI]", "0.25 [-4.47, 4.98]", paste(fmt_num(r5_1n$b), fmt_ci(r5_1n$lo, r5_1n$hi)),
+  "R5: share of Knowledge below 50, Study 2", "36.1 [25.0, 46.9]", paste(fmt_pct(sh2["est"]), fmt_ci(100 * sh2["lo"], 100 * sh2["hi"], 1)),
+  "R5: share of Knowledge below 50, Study 1", "41.4 [32.1, 50.7]", paste(fmt_pct(sh1["est"]), fmt_ci(100 * sh1["lo"], 100 * sh1["hi"], 1)),
+  "S1: Negligence choices, AWARE Yes", "29.1 [24.1, 34.3]", paste(fmt_pct(neg$est), fmt_ci(100 * pct_ci(neg$boot)[1], 100 * pct_ci(neg$boot)[2], 1)),
+  "S1: Negligence choices, SHOULD Yes", "70.1 [64.6, 75.6]", paste(fmt_pct(neg_should$est), fmt_ci(100 * pct_ci(neg_should$boot)[1], 100 * pct_ci(neg_should$boot)[2], 1)),
+  "S3: reading (a), act and situation, full sample", "55.7 [50.0, 61.5]", paste(fmt_num(100 * s3$est[1], 1), fmt_ci(100 * s3$lo[1], 100 * s3$hi[1], 1)),
+  "S3: reading (b), the contents, full sample", "25.2 [20.2, 30.5]", paste(fmt_num(100 * s3$est[2], 1), fmt_ci(100 * s3$lo[2], 100 * s3$hi[2], 1)),
+  "S6: Study 2 b (p), four models", "0.151 (= .340); 0.226 (= .099); 0.171 (= .251); 0.234 (= .083)",
+    paste(paste0(fmt3(s6_2$b), " (", fmt_p(s6_2$p), ")"), collapse = "; "),
+  "S7: Raven's score with Kendall's tau, r (p)", "0.109 (= .078)", paste0(fmt3(unname(t7$estimate)), " (", fmt_p(t7$p.value), ")"),
+  "S10: payment OR, probe-defined category", "6.775", fmt3(pay_probe$or),
+  "S11: Recklessness choices, AWARE No", "23.7% [17.8, 29.5]", paste0(fmt_pct(r_unend$est), "% ", fmt_ci(100 * pct_ci(r_unend$boot)[1], 100 * pct_ci(r_unend$boot)[2], 1)),
+  "S11: Recklessness or Blamelessness, KNEW Yes", "30.9% [25.4, 36.6]", paste0(fmt_pct(mirror$est), "% ", fmt_ci(100 * pct_ci(mirror$boot)[1], 100 * pct_ci(mirror$boot)[2], 1))
+)
+# A pair matches when the printed strings are identical. Iterative model fits can end a hair apart on
+# different computers, so a pair whose numbers differ by at most one unit in the last printed digit is
+# marked "last digit" rather than as a mismatch.
+nums_of <- function(s) regmatches(s, gregexpr("-?[0-9]*\\.?[0-9]+", s))[[1]]
+compare_printed <- function(a, b) {
+  if (identical(a, b)) return("yes")
+  na <- nums_of(a); nb <- nums_of(b)
+  if (length(na) != length(nb)) return("NO")
+  unit <- 10^(-nchar(sub("^[^.]*\\.?", "", na)))
+  if (all(abs(as.numeric(na) - as.numeric(nb)) <= unit + 1e-9)) "last digit" else "NO"
+}
+checks <- checks %>% mutate(Match = map2_chr(`Registered report`, `This report`, compare_printed))
+n_mismatch <- sum(checks$Match == "NO"); n_last <- sum(checks$Match == "last digit")
+tbl(checks, "Registered Study 2 numbers, recomputed and checked against the frozen report")
+```
+
+`r if (n_mismatch > 0) paste0("**", n_mismatch, " of ", nrow(checks), " numbers differ from the frozen report; they are marked NO above, and the tables below should not be used until the difference is explained.**") else if (n_last > 0) paste0(nrow(checks) - n_last, " of ", nrow(checks), " numbers equal the frozen report exactly. The other ", n_last, " (", paste(checks$Quantity[checks$Match == "last digit"], collapse = "; "), ") differ only in the last printed digit, which happens when an iterative model fit runs on a different computer from the one that produced the frozen report; none differs by more. On the computer of the registered run they should all match.") else paste0("All ", nrow(checks), " numbers equal the frozen report.")`
+
+# The two numbers the response letter needs
+
+## Ranking the four categories (Reviewer 1, point 5)
+
+Both studies ended with the same task: participants ranked the four definitions from most to least culpable. A ranking is correct when it follows the Code's order (Knowledge, Recklessness, Negligence, Blamelessness), and Kendall's tau measures its agreement with that order (1 for the correct order, −1 for the reverse). Chance is 1 in 24 orderings. The Study 1 values should equal the published ones (40.6% correct; mean tau 0.623, SD 0.504). Neither number is a registered Study 2 analysis; the registered script used tau only as a correlate of the Raven's score (S7).
+
+```{r ranking}
+rank_summary <- function(pp, study) {
+  r <- lapply(pp$ranking, function(j) jsonlite::fromJSON(j))
+  correct <- pp$tau == 1
+  bt <- binom.test(sum(correct), nrow(pp), p = 1 / 24)
+  kr_swap <- vapply(r, function(x) identical(x, c("Recklessness", "Knowledge", "Negligence", "Blamelessness")), TRUE)
+  r_above_k <- vapply(r, function(x) match("Recklessness", x) < match("Knowledge", x), TRUE)
+  k_first <- vapply(r, function(x) x[1] == "Knowledge", TRUE)
+  tt <- t.test(pp$tau)
+  tibble(Study = study, People = nrow(pp), `Correct order` = sum(correct),
+         `Correct, %` = 100 * mean(correct), `95% CI` = pci(bt$conf.int[1], bt$conf.int[2]),
+         `p against 1 in 24` = pval(bt$p.value),
+         `Mean tau (SD)` = paste0(num(mean(pp$tau), 3), " (", num(sd(pp$tau), 3), ")"),
+         `t against 0` = paste0("t(", tt$parameter, ") = ", num(tt$statistic), ", p ", pval(tt$p.value)),
+         `Knowledge ranked first, %` = 100 * mean(k_first),
+         `Recklessness above Knowledge, %` = 100 * mean(r_above_k),
+         `Only Knowledge and Recklessness swapped, %` = 100 * mean(kr_swap),
+         `Swap share of incorrect rankings, %` = 100 * sum(kr_swap) / sum(!correct))
+}
+ranking_tab <- bind_rows(rank_summary(people1, "Study 1"), rank_summary(people, "Study 2"))
+ranking_tab %>% mutate(across(where(is.double), ~ num(.x, 1))) %>% mutate(across(everything(), as.character)) %>%
+  select(-Study) %>% t() %>% as.data.frame() %>% rownames_to_column("Quantity") %>%
+  setNames(c("Quantity", "Study 1", "Study 2")) %>% tbl("Rankings of the four definitions")
+rk2 <- ranking_tab %>% filter(Study == "Study 2")
+write_csv(ranking_tab, file.path(TAB, "ranking.csv"))
+```
+
+**For the letter (R1.5).** In Study 2, `r rk2$"Correct order"` of `r rk2$People` participants (`r num(rk2$"Correct, %", 1)`%, 95% CI `r rk2$"95% CI"`) ranked the four categories in the Code's order, against 40.6% in Study 1 and 4.2% expected by chance. The commonest error in both studies was the knowledge–recklessness boundary: `r num(rk2$"Swap share of incorrect rankings, %", 0)`% of the incorrect Study 2 rankings differed from the Code's order only by placing Recklessness above Knowledge.
+
+## Inquiry carryover in Study 1 (Reviewer 2, point 3)
+
+Reviewer 2 asked whether participants who had read a vignette in which the courier asked what was inside were more likely to call later vignettes, in which he did not ask, reckless. The registered Study 2 analysis S6 tested this; the same code, unchanged, now runs on Study 1. `prior_inquiry` counts the earlier vignettes, in that participant's order, in which the courier asked. The four models control for position; the placebo model asks the same question of the inquiry vignettes themselves, where a carryover specific to the inquiry should not appear. This is an exploratory analysis of Study 1.
+
+```{r s6-study1}
+s6_1 <- s6_run(s1)
+s6_both <- bind_rows(s6_1 %>% mutate(Study = "Study 1"), s6_2 %>% mutate(Study = "Study 2")) %>%
+  transmute(Study, Model, b, z, p = pval(p), `p (Holm within S6)` = pval(`p (Holm within S6)`),
+            `Trials (non-inquiry; inquiry)` = paste0(trials_non_inquiry, "; ", trials_inquiry))
+tbl(s6_both, "Prior inquiry exposure and later judgments, controlling for position (log-odds)", digits = 3)
+write_csv(s6_both, file.path(TAB, "inquiry_carryover.csv"))
+# In the letter's style: b with two decimals, p with two.
+s6r <- function(x, i) paste0("b = ", num(x$b[i], 2), ", p = ", apa(x$p[i], 2))
+```
+
+**For the letter (R2.3).** In Study 1, the number of earlier inquiry vignettes did not reliably increase Recklessness choices on later vignettes without the inquiry (`r s6r(s6_1, 1)`) or their overall culpability (`r s6r(s6_1, 2)`), and the placebo estimate on the inquiry vignettes was `r s6r(s6_1, 4)`. In Study 2 the corresponding estimates were `r s6r(s6_2, 1)`, `r s6r(s6_2, 2)` and `r s6r(s6_2, 4)`.
+
+# Main-text tables and figures
+
+## Table 1: what replicated
+
+```{r table-replication}
+pct4 <- function(p) paste(num(100 * p, 1), collapse = " / ")
+rep_tab <- tribble(
+  ~Result, ~`Study 1`, ~`Study 2`, ~Replicated,
+  "## Distribution of choices (R1)", "", "", "",
+  "Blamelessness / Negligence / Recklessness / Knowledge, %", pct4(r1_s1$pct), pct4(r1$pct), "",
+  "Cohen's *w* against a uniform distribution", num(r1_s1$w), num(r1$w), ifelse(replicated[1], "Yes", "No"),
+  "## Belief rating and culpability (R2)", "", "", "",
+  "Odds ratio per 10 rating points [95% CI]", or_txt(r2_s1$or10, r2_s1$or10_ci[1], r2_s1$or10_ci[2]),
+    or_txt(r2$or10, r2$or10_ci[1], r2$or10_ci[2]), ifelse(replicated[2], "Yes", "No"),
+  "## Vignette features, odds ratio [95% CI] (R3)", "", "", "",
+  "Payment of $1,000 (vs. none)", or_txt(pay1$or, pay1$lo, pay1$hi), or_txt(pay2$or, pay2$lo, pay2$hi), ifelse(replicated[3], "Yes", "No"),
+  "Biker (vs. uncle) as the source", or_txt(src1$or, src1$lo, src1$hi), or_txt(src2$or, src2$lo, src2$hi), "",
+  "## Awareness-denying justifications (R4)", "", "", "",
+  "Knowledge vs. Recklessness choices, % denying", paste0(pct(r4_s1$rate_k), " vs. ", pct(r4_s1$rate_r)),
+    paste0(pct(r4$rate_k), " vs. ", pct(r4$rate_r)), ifelse(replicated[4], "Yes", "No"),
+  "Odds ratio [95% CI]", or_txt(r4_s1$or, r4_s1$or_lo, r4_s1$or_hi), or_txt(r4$or, r4$or_lo, r4$or_hi), "",
+  "## Knowledge minus Recklessness choices, belief rating (R5)", "", "", "",
+  "All trials, points [95% CI]", paste(num(r5_1$b), ci(r5_1$lo, r5_1$hi)), paste(num(r5_2$b), ci(r5_2$lo, r5_2$hi)), "",
+  "Awareness-denying justifications set aside, points [95% CI]", paste(num(r5_1n$b), ci(r5_1n$lo, r5_1n$hi)),
+    paste(num(r5_2n$b), ci(r5_2n$lo, r5_2n$hi)), "",
+  "Knowledge choices with a belief rating below 50, % [95% CI]", paste(pct(sh1["est"]), pci(sh1["lo"], sh1["hi"])),
+    paste(pct(sh2["est"]), pci(sh2["lo"], sh2["hi"])), ""
+)
+note_rep <- paste0(
+  "Study 1: 1,060 trials from 212 participants; Study 2: 1,310 trials from 262 participants. Odds ratios come from ",
+  "cumulative link mixed models with a random intercept for participant (R2: belief rating alone; R3: the six features ",
+  "together) and, for R4, from a logistic mixed model of Knowledge and Recklessness trials with a codable justification. ",
+  "R5 estimates come from linear mixed models; the percentage below 50 has a participant-cluster bootstrap interval. ",
+  "Replicated: Holm-adjusted *p* < .05 across R1 to R4, in the Study 1 direction (R5 had no prediction). Study 1 values ",
+  "were recomputed with the Study 2 code and equal the registered Study 1 values.")
+write_tex(rep_tab, "tab_replication.tex", "Study 1 results and their replication in Study 2", "tab:replication",
+          note_rep, align = "p{6.2cm}ccc", size = "\\footnotesize")
+show_tex(rep_tab, "Table 1. Study 1 results and their replication in Study 2")
+```
+
+## Table 2: what the Knowledge choices meant
+
+```{r table-elements}
+cnt <- function(x, y) paste0(" (", x, " of ", y, ")")
+el_tab <- tribble(
+  ~Result, ~`Estimate [95% CI]`, ~Analysis,
+  "## Knowledge choices not endorsed by the knowledge question", "", "",
+  "All Knowledge choices", paste0(pct(h1$rate_all), "% ", pci(h1$rate_all_ci[1], h1$rate_all_ci[2]),
+                                  cnt(sum(k$unendorsed), nrow(k))), "H1",
+  "Belief rating below 50", paste0(pct(h1$rate_low), "% ", pci(h1$rate_low_ci[1], h1$rate_low_ci[2]),
+                                   cnt(sum(k$unendorsed[k$low_slider == 1]), sum(k$low_slider == 1))), "H1",
+  "Belief rating 50 or above", paste0(pct(h1$rate_high), "% ", pci(h1$rate_high_ci[1], h1$rate_high_ci[2]),
+                                      cnt(sum(k$unendorsed[k$low_slider == 0]), sum(k$low_slider == 0))), "H1",
+  "Difference", paste0(pct(h1$diff), " points ", pci(h1$diff_ci[1], h1$diff_ci[2]), ", *p* ", pval(h1$p)), "H1",
+  "## The other categories", "", "",
+  "Recklessness choices not endorsed by the risk question", paste0(pct(r_unend$est), "% ",
+    pci(pct_ci(r_unend$boot)[1], pct_ci(r_unend$boot)[2])), "S11",
+  "Negligence choices answered yes to the risk question", paste0(pct(neg$est), "% ",
+    pci(pct_ci(neg$boot)[1], pct_ci(neg$boot)[2])), "S1",
+  "## Reading of the Knowledge option (comprehension item)", "", "",
+  "Aware of what he was doing and of his situation", paste0(num(100 * s3$est[1], 1), "% ", pci(s3$lo[1], s3$hi[1])), "S3",
+  "Aware that the package contained illicit material", paste0(num(100 * s3$est[2], 1), "% ", pci(s3$lo[2], s3$hi[2])), "S3",
+  "## Belief ratings, probe-defined categories", "", "",
+  "Knowledge minus Recklessness, points", paste(num(pk$est - pr$est), ci(pct_ci(c1)[1], pct_ci(c1)[2])), "V1",
+  "Same, Recklessness and Negligence choices only (*b*)", paste0(num(v1$b), " ", ci(v1$ci[1], v1$ci[2]), ", *d* = ", num(v1$d)), "V1",
+  "## Payment of $1,000, odds ratio", "", "",
+  "Probe-defined category", or_txt(pay_probe$or, pay_probe$lo, pay_probe$hi), "S10",
+  "Original choice", or_txt(pay2$or, pay2$lo, pay2$hi), "R3"
+)
+note_el <- paste0(
+  "Study 2, 262 participants. The knowledge question asked whether the scenario proved beyond a reasonable doubt that ",
+  "the courier knew, or was practically certain, that illicit material was in the package; the risk question asked the ",
+  "same of awareness of a substantial risk. Intervals for percentages are participant-cluster bootstrap intervals ",
+  "(5,000 resamples); the H1 *p* is the registered test (mixed model with participant random intercept). The comprehension ",
+  "item gave five readings of the Knowledge option; the other three drew 19% of participants together. The probe-defined ",
+  "category is the highest state affirmed across the three element questions. Analysis labels refer to the preregistration ",
+  "(H1 confirmatory, V1 secondary, S exploratory, R replication).")
+write_tex(el_tab, "tab_element_questions.tex", "What the Knowledge choices meant: the element questions in Study 2",
+          "tab:elements", note_el, align = "lrc")
+show_tex(el_tab, "Table 2. What the Knowledge choices meant: the element questions in Study 2")
+```
+
+## Figure 1: belief ratings by category
+
+The figure shows the mean belief rating in each category, for the choices in both studies and for the probe-defined categories in Study 2, with 95% participant-cluster bootstrap intervals. Under the Code's order the means should rise from Blamelessness to Knowledge. The original choices dip at Knowledge in both studies; the probe-defined categories rise throughout.
+
+```{r figure-belief, fig.width = 9, fig.height = 3.8}
+W1 <- boot_counts(nlevels(s1$pid), B, seed = 910)
+belief_by <- function(x, cat_col, W, label) {
+  pids <- levels(x$pid)
+  map_dfr(CATS, function(cc) {
+    r <- boot_ratio(x, x$slider, x[[cat_col]] == cc, W, pids)
+    tibble(Panel = label, Category = cc, mean = r$est, lo = pct_ci(r$boot)[1], hi = pct_ci(r$boot)[2], n = r$n)
+  })
+}
+belief_tab <- bind_rows(belief_by(s1, "choice", W1, "Study 1: choice"),
+                        belief_by(d, "choice", W_all, "Study 2: choice"),
+                        belief_by(d, "probe_cat", W_all, "Study 2: element questions")) %>%
+  mutate(Panel = factor(Panel, c("Study 1: choice", "Study 2: choice", "Study 2: element questions")),
+         Category = factor(Category, CATS))
+g_belief <- ggplot(belief_tab, aes(Category, mean)) +
+  geom_line(aes(group = 1), colour = "grey60", linewidth = 0.5) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.15, linewidth = 0.5) +
+  geom_point(size = 2.4) +
+  geom_text(aes(y = 4, label = paste0("n = ", n)), size = 2.8, colour = "grey35") +
+  facet_wrap(~ Panel, nrow = 1) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+  scale_x_discrete(labels = c("Blameless", "Negligent", "Reckless", "Knowing")) +
+  labs(x = NULL, y = "Mean belief rating (0 to 100)") + theme_ms
+save_fig(g_belief, "fig_belief_by_category", 9, 3.8)
+write_csv(belief_tab, file.path(TAB, "belief_by_category.csv"))
+g_belief
+```
+
+## Figure 2: element answers by original choice
+
+The figure shows, for each original choice in Study 2, the percentage of trials on which the participant answered yes to each element question. Knowledge choices were answered yes to the knowledge question no more often than Recklessness choices, and yes to the risk question less often.
+
+```{r figure-answers, fig.width = 7.5, fig.height = 4}
+qs <-c(knew = "Knew (knowledge question)", aware = "Aware of the risk", should = "Should have been aware")
+answers <- map_dfr(CATS, function(cc) map_dfr(names(qs), function(q) {
+  r <- boot_ratio(d, as.numeric(d[[q]] == "Yes"), d$choice == cc, W_all, pids_all)
+  tibble(Choice = cc, Question = qs[[q]], pct = 100 * r$est, lo = 100 * pct_ci(r$boot)[1], hi = 100 * pct_ci(r$boot)[2], n = r$n)
+})) %>% mutate(Choice = factor(Choice, CATS), Question = factor(Question, unname(qs)))
+g_answers <- ggplot(answers, aes(Choice, pct, shape = Question, group = Question)) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.12, linewidth = 0.4, position = position_dodge(width = 0.5)) +
+  geom_point(size = 2.4, fill = "white", position = position_dodge(width = 0.5)) +
+  scale_shape_manual(values = c(16, 21, 4)) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+  labs(x = "Original choice", y = "Answered yes (% of trials)", shape = NULL) + theme_ms
+save_fig(g_answers, "fig_element_answers_by_choice", 7.5, 4)
+write_csv(answers, file.path(TAB, "element_answers_by_choice.csv"))
+g_answers
+```
+
+# Supplement: the machine learning analyses
+
+These tables come from the files the notebook `05_nlp_study2.ipynb` wrote in its Colab run (`output/nlp`). None of these analyses is registered for Study 2. The Study 1 values are the notebook's rerun of the Study 1 code on the Study 1 data, which reproduced every published Study 1 value.
+
+```{r nlp-read}
+if (!has_nlp) {
+  cat("The notebook outputs are not all in output/nlp, so this section is skipped.\n")
+} else {
+  rf <- read_csv(file.path(NLP, "rf_cv_accuracy.csv"), show_col_types = FALSE)
+  rft <- read_csv(file.path(NLP, "rf_paired_tests.csv"), show_col_types = FALSE)
+  top <- read_csv(file.path(NLP, "shap_top_features.csv"), show_col_types = FALSE)
+  rank1 <- read_csv(file.path(NLP, "shap_bootstrap_rank_first.csv"), show_col_types = FALSE)
+  kboot <- read_csv(file.path(NLP, "shap_bootstrap_knowledge.csv"), show_col_types = FALSE)
+  krates <- read_csv(file.path(NLP, "knowledge_rates_by_feature.csv"), show_col_types = FALSE)
+  rsa <- read_csv(file.path(NLP, "rsa.csv"), show_col_types = FALSE)
+  txt <- read_csv(file.path(NLP, "text_classification.csv"), show_col_types = FALSE)
+  txtb <- read_csv(file.path(NLP, "text_classification_balanced.csv"), show_col_types = FALSE)
+  comb <- read_csv(file.path(NLP, "combined_models.csv"), show_col_types = FALSE)
+  topics <- read_csv(file.path(NLP, "topics_minilm.csv"), show_col_types = FALSE)
+  topic_codes <- read_csv(file.path(NLP, "topics_minilm_codes.csv"), show_col_types = FALSE)
+  vcor <- read_csv(file.path(NLP, "vignette_means_correlations.csv"), show_col_types = FALSE)
+  cat(readLines(file.path(NLP, "session_info.txt")), sep = "\n")
+}
+O3 <- c("Study 1", "Study 2", "Study 2 probe-defined")
+```
+
+## Table S1: classifiers
+
+```{r table-classifiers, eval = has_nlp}
+acck <- function(a, s, k) paste0(apa(a, 3), " \u00b1 ", apa(s, 3), " (", apa(k, 3), ")")
+rf_cell <- function(o, model) { r <- rf %>% filter(Outcome == o, Model == model); acck(r$Accuracy, r$SD, r$Kappa) }
+tx_cell <- function(o) { r <- txt %>% filter(Outcome == o); acck(r$Accuracy, r$SD, r$Kappa) }
+cb_cell <- function(s, model) { r <- comb %>% filter(Study == s, Model == model); acck(r$Accuracy, r$SD, r$Kappa) }
+# Paired t tests across the 10 folds, shown as absolute values; the direction is stated in the row label or in words.
+cb_t <- function(s, model) { r <- comb %>% filter(Study == s, Model == model); paste0("*t*(9) = ", num(abs(r$Accuracy)), ", *p* ", pval(r$SD)) }
+rf_t <- function(o, comp = "A vs B") { r <- rft %>% filter(Outcome == o, startsWith(Comparison, comp))
+  paste0("*t*(9) = ", num(abs(r$`t(9)`)), ", *p* ", pval(r$p)) }
+rf_ac <- function(o) { r <- rft %>% filter(Outcome == o, startsWith(Comparison, "A vs C"))
+  paste0(rf_t(o, "A vs C"), " (", ifelse(r$`Accuracy difference` > 0, "rating", "features"), ")") }
+majority <- function(o) apa(rf$`Majority rate`[rf$Outcome == o][1], 3)
+cls_tab <- tribble(
+  ~Model, ~`Study 1`, ~`Study 2`, ~`Study 2, probe-defined`,
+  "## Random forest, 10-fold cross-validation", "", "", "",
+  "Six vignette features", rf_cell(O3[1], "Features only (6 predictors)"), rf_cell(O3[2], "Features only (6 predictors)"), rf_cell(O3[3], "Features only (6 predictors)"),
+  "Belief rating alone", rf_cell(O3[1], "Belief rating only (1 predictor)"), rf_cell(O3[2], "Belief rating only (1 predictor)"), rf_cell(O3[3], "Belief rating only (1 predictor)"),
+  "Features and belief rating", rf_cell(O3[1], "Features + belief rating (7 predictors)"), rf_cell(O3[2], "Features + belief rating (7 predictors)"), rf_cell(O3[3], "Features + belief rating (7 predictors)"),
+  "Features and belief rating vs. features", rf_t(O3[1]), rf_t(O3[2]), rf_t(O3[3]),
+  "Accuracy of always choosing the most frequent category", majority(O3[1]), majority(O3[2]), majority(O3[3]),
+  "## Justification text (BGE-large embeddings)", "", "", "",
+  "Logistic regression on the text", tx_cell(O3[1]), tx_cell(O3[2]), tx_cell(O3[3]),
+  "Random forest, features and text", cb_cell("Study 1", "Features + text (6 + BGE)"), cb_cell("Study 2", "Features + text (6 + BGE)"), "",
+  "Features and text vs. features", cb_t("Study 1", "t: combined vs features only"), cb_t("Study 2", "t: combined vs features only"), "",
+  "Features and text vs. features and belief rating", cb_t("Study 1", "t: combined vs features + belief"), cb_t("Study 2", "t: combined vs features + belief"), ""
+)
+note_cls <- paste0(
+  "Cells give mean accuracy \u00b1 *SD* across the 10 folds, with Cohen's \u03ba in parentheses. Random forests: 500 trees, at least ",
+  "five trials per leaf, balanced class weights; the folds are compared with paired *t* tests, shown as absolute values. In ",
+  "every comparison of a model with its extension, the extension was the more accurate. The belief rating alone ",
+  "was more accurate than the six features in Study 1 (", rf_t(O3[1], "A vs C"), ") but less accurate in Study 2 (",
+  rf_t(O3[2], "A vs C"), "). The text models use the ",
+  "trials with a justification of more than five characters (1,044 in Study 1, 1,307 in Study 2). Study 1 values ",
+  "reproduce the published Study 1 values. The probe-defined outcome is the highest state affirmed on the three element ",
+  "questions. None of these analyses was registered for Study 2.")
+write_tex(cls_tab, "tab_ml_classifiers.tex", "Classification of the four categories from vignette features, belief ratings and justification text",
+          "tab:ml_classifiers", note_cls, align = "p{4.4cm}ccc", size = "\\footnotesize")
+show_tex(cls_tab, "Table S1. Classifiers")
+```
+
+## Table S2: which features drove each category
+
+```{r table-shap, eval = has_nlp}
+short <- function(f) sub(" \\(.*", "", f)
+shap_cell <- function(o, cat) {
+  t1 <- top %>% filter(Outcome == o, Category == cat)
+  rr <- rank1 %>% filter(Outcome == o, Category == cat)
+  share <- rr[[t1$First]]
+  paste0(short(t1$First), " ", apa(t1$`First |SHAP|`, 3), " (", num(share, 0), "%)")
+}
+kb <- function(o) { r <- kboot %>% filter(Outcome == o)
+  paste0(apa(r$`Contents |SHAP|`, 3), " vs. ", apa(r$`Payment |SHAP|`, 3), " (", num(r$`Contents > payment (% of resamples)`, 0), "%)") }
+kr <- function(o, f) { r <- krates %>% filter(Outcome == o, Feature == f)
+  paste0(num(r$`Knowledge % (level 1)`, 1), " vs. ", num(r$`Knowledge % (level 0)`, 1)) }
+shap_tab <- tribble(
+  ~Category, ~`Study 1`, ~`Study 2`, ~`Study 2, probe-defined`,
+  "## Most important feature (mean |SHAP|; % of bootstrap resamples in which it ranks first)", "", "", "",
+  "Blamelessness", shap_cell(O3[1], "Blamelessness"), shap_cell(O3[2], "Blamelessness"), shap_cell(O3[3], "Blamelessness"),
+  "Negligence", shap_cell(O3[1], "Negligence"), shap_cell(O3[2], "Negligence"), shap_cell(O3[3], "Negligence"),
+  "Recklessness", shap_cell(O3[1], "Recklessness"), shap_cell(O3[2], "Recklessness"), shap_cell(O3[3], "Recklessness"),
+  "Knowledge", shap_cell(O3[1], "Knowledge"), shap_cell(O3[2], "Knowledge"), shap_cell(O3[3], "Knowledge"),
+  "## Knowledge: contents against payment", "", "", "",
+  "Mean |SHAP|, contents vs. payment (% of resamples with contents ahead)", kb(O3[1]), kb(O3[2]), kb(O3[3]),
+  "Knowledge, % of trials: fentanyl vs. rare-disease drugs", kr(O3[1], "Contents (fentanyl)"), kr(O3[2], "Contents (fentanyl)"), kr(O3[3], "Contents (fentanyl)"),
+  "Knowledge, % of trials: $1,000 vs. no payment", kr(O3[1], "Payment ($1000)"), kr(O3[2], "Payment ($1000)"), kr(O3[3], "Payment ($1000)")
+)
+note_shap <- paste0(
+  "SHAP values from a random forest of the six vignette features fitted to all trials (TreeExplainer). Mean |SHAP| measures ",
+  "how much a feature moves the predicted probability of a category but not in which direction; the last two rows give the ",
+  "direction. Stability: a participant bootstrap (200 resamples, each person's five trials kept together) refitted the forest ",
+  "and recomputed the importances. The Study 1 values reproduce the published Study 1 values. Not registered for Study 2.")
+write_tex(shap_tab, "tab_ml_shap.tex", "Feature importance by category and its stability", "tab:ml_shap", note_shap,
+          align = "p{5.2cm}ccc", size = "\\footnotesize")
+show_tex(shap_tab, "Table S2. Feature importance by category and its stability")
+```
+
+## Table S3: representational similarity analysis
+
+```{r table-rsa, eval = has_nlp}
+rsa_cell <- function(o, e) { r <- rsa %>% filter(Outcome == o, Embedding == e)
+  paste0(apa(r$rho, 3), " (", sub("^= ", "", pval(r$`p (pairs, as in Study 1)`)), "; ", sub("^= ", "", pval(r$`p (permutation)`)), ")") }
+embs <- c("BGE-large (full text)", "MiniLM (full text)", "BGE-large (clauses only)")
+rsa_tab <- tibble(Embedding = c("BGE-large, full text", "MiniLM, full text", "BGE-large, varying clauses only"),
+                  `Study 1` = map_chr(embs, ~ rsa_cell(O3[1], .x)), `Study 2` = map_chr(embs, ~ rsa_cell(O3[2], .x)),
+                  `Study 2, probe-defined` = map_chr(embs, ~ rsa_cell(O3[3], .x)))
+note_rsa <- paste0(
+  "Spearman correlation between the cosine distance of two vignettes' embeddings and the absolute difference in their mean ",
+  "culpability (1 to 4), across the 2,016 pairs of the 64 vignettes. In parentheses: the *p* value that treats pairs as ",
+  "independent (as published for Study 1), then a permutation *p* value from 10,000 shuffles of the vignette means, which ",
+  "treats vignettes as the units. The vignette means of the two studies correlated *r* = ",
+  apa(vcor$`Pearson r`[1], 2), ". Not registered for Study 2.")
+write_tex(rsa_tab, "tab_ml_rsa.tex", "Representational similarity analysis", "tab:ml_rsa", note_rsa, align = "lccc",
+          size = "\\footnotesize")
+show_tex(rsa_tab, "Table S3. Representational similarity analysis")
+```
+
+## Table S4: topics in the Study 2 justifications
+
+```{r table-topics, eval = has_nlp}
+stop_words <- c("he", "the", "was", "to", "it", "that", "and", "not", "in", "his", "of", "a", "is", "have", "for",
+                "what", "would", "be", "him", "this", "as", "on", "my", "made", "used", "an", "with", "but", "they",
+                "there", "if", "so", "or", "at", "had", "did", "do", "been", "any", "are", "being", "by", "from",
+                "just", "about", "who", "which", "their", "them", "were", "has", "very", "more", "could", "i")
+names_def <- c("john", "david", "andrew", "robert", "daniel")
+kw <- function(s) { w <- str_split(s, ",\\s*")[[1]]; w <- w[!w %in% stop_words]; paste(head(w, 5), collapse = ", ") }
+codes_long <- topic_codes %>% filter(Topic != -1)
+code_cols <- c("Knew", "Suspected", "Unaware, at fault", "Unaware, no fault", "Act or situation only", "Evidentiary", "Uncodable")
+dom_code <- codes_long %>% rowwise() %>%
+  mutate(`Dominant code` = code_cols[which.max(c_across(all_of(code_cols)))],
+         `Code %` = max(c_across(all_of(code_cols)))) %>% ungroup() %>% select(Topic, `Dominant code`, `Code %`)
+topic_tab <- topics %>% left_join(dom_code, by = "Topic") %>%
+  transmute(Topic = as.character(Topic), Keywords = map_chr(Keywords, kw), n = as.character(n),
+            `Most frequent choice (%)` = paste0(Dominant, " (", num(`Dominant %`, 0), ")"),
+            `Most frequent code (%)` = paste0(`Dominant code`, " (", num(`Code %`, 0), ")"))
+name_topics <- topics$Topic[map_lgl(topics$Keywords, ~ any(str_split(.x, ",\\s*")[[1]][1:3] %in% names_def))]
+note_topics <- paste0(
+  "BERTopic on the 1,307 Study 2 justifications longer than five characters (MiniLM embeddings, UMAP, HDBSCAN); ",
+  format(sum(topics$n), big.mark = ","), " justifications fell in the ", nrow(topics), " topics and the rest in the outlier group. Keywords: the topic's ",
+  "five highest-weighted words after common function words are removed. Most frequent choice: the category most often ",
+  "chosen with the topic's justifications; most frequent code: the most frequent of the seven registered justification ",
+  "codes; percentages are of the topic's justifications. Topics ",
+  paste(name_topics, collapse = ", "), " are partly organized by the defendant's randomized name. Not registered.")
+write_tex(topic_tab, "tab_topics_s2.tex", paste0("BERTopic topics in the Study 2 justifications (", nrow(topics), " topics)"),
+          "tab:topics_s2", note_topics, align = "rp{4.4cm}rll", size = "\\footnotesize")
+show_tex(topic_tab, "Table S4. Topics in the Study 2 justifications")
+```
+
+## Figure S1: the Knowledge percentage by feature
+
+SHAP importances have no direction, so this figure gives it: the change in the percentage of trials classified as Knowledge when each feature is present, for the choices in both studies and the probe-defined category in Study 2.
+
+```{r figure-features, eval = has_nlp, fig.width = 9, fig.height = 3.6}
+fig_feat <- krates %>%
+  mutate(Outcome = factor(recode(Outcome, `Study 1` = "Study 1: choice", `Study 2` = "Study 2: choice",
+                                 `Study 2 probe-defined` = "Study 2: element questions"),
+                          c("Study 1: choice", "Study 2: choice", "Study 2: element questions")),
+         Feature = factor(Feature, rev(c("Payment ($1000)", "Source (biker)", "Package (duffel)", "Inquiry (told)",
+                                         "Location (Mexico)", "Contents (fentanyl)"))))
+g_feat <- ggplot(fig_feat, aes(`Difference (points)`, Feature)) +
+  geom_vline(xintercept = 0, colour = "grey50", linewidth = 0.4) +
+  geom_col(width = 0.6, fill = "grey45") +
+  geom_text(aes(label = sprintf("%.1f", `Difference (points)`), hjust = ifelse(`Difference (points)` >= 0, -0.15, 1.15)),
+            size = 2.9, colour = "grey20") +
+  facet_wrap(~ Outcome, nrow = 1) +
+  scale_x_continuous(limits = c(-10, 24), breaks = seq(-10, 20, 10)) +
+  labs(x = "Change in Knowledge, percentage points (feature present minus absent)", y = NULL) +
+  theme_ms + theme(panel.grid.major.y = element_blank(), panel.grid.major.x = element_line(colour = "grey90"))
+save_fig(g_feat, "fig_knowledge_by_feature", 9, 3.6)
+g_feat
+```
+
+## The notebook's figures for the supplement
+
+The notebook saved its figures in `output/nlp/figures`. The ones the supplement needs are `fig_s2_shap_class_heatmap_comparison.pdf` (importance by category in the three outcomes, the companion of Table S2), `fig_s2_shap_knowledge_bootstrap.pdf` (the Knowledge importances with their bootstrap ranges), `fig_s2_rsa_scatter.pdf` (Table S3) and `fig_s2_vignette_means_s1_vs_s2.pdf` (the vignette means of the two studies). The Study 1 figures already in the manuscript remain as they are.
+
+# Files written
+
+```{r files-written}
+tibble(File = c(list.files(TAB, full.names = TRUE), list.files(FIG, full.names = TRUE))) %>%
+  mutate(`Size (KB)` = round(file.size(File) / 1024, 1)) %>% tbl("Tables (LaTeX and CSV) and figures")
+```
+
+# Model notes
+
+```{r model-notes}
+if (length(model_notes$rows)) bind_rows(model_notes$rows) %>% tbl("Refits and estimation problems in the ordinal models") else
+  cat("Every cumulative link mixed model returned finite standard errors on the first fit.\n")
+```
+
+# Session information
+
+```{r session}
+sessionInfo()
+```

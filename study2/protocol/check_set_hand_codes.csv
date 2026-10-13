@@ -1,0 +1,101 @@
+item,hand_code,note
+C001,Suspected,AI-generated coding throughout. Payment is taken to imply that he knowingly assumed a risk.
+C002,Act or situation only,"Review: Lists accepting an unopened package from a stranger, but does not specify his belief or a duty to check."
+C003,"Unaware, no fault","Describes the gift wrapping as deceptive, implying an innocent appearance rather than recognized risk."
+C004,Suspected,The payment is used to cast doubt on the claim that the bag contained only coffee.
+C005,Act or situation only,"Awareness concerns his surroundings, not the contents."
+C006,"Unaware, at fault",Says he should still have exercised care despite knowing the sender.
+C007,"Unaware, at fault",Faults him for failing to verify the contents of a stranger's bag.
+C008,"Unaware, at fault",Says asking was insufficient and he should have checked the contents more carefully.
+C009,"Unaware, no fault",Explicitly attributes belief in legitimate contents and no reason to suspect otherwise.
+C010,Uncodable,The fragment does not convey an interpretable judgment about the contents.
+C011,Act or situation only,Discusses payment as normal for the transaction without addressing his belief about the contents.
+C012,Knew,Attributes awareness that he was smuggling; 'likely' qualifies the narrator's attribution.
+C013,Act or situation only,Review: Identifies gift packaging only; does not say whether it reassured him or concealed a recognized risk.
+C014,"Unaware, at fault",Says he was deceived but should have checked.
+C015,"Unaware, no fault",Says he believed his uncle's claim that the contents were coffee.
+C016,Knew,Explicitly says he certainly believed the package contained something illicit.
+C017,Suspected,"'Partially knew' implies some awareness, not practical certainty about illicit contents."
+C018,Suspected,Contrasts uncertainty about the contents with suspicious payment and wrapping.
+C019,"Unaware, no fault",Says trust in his uncle meant he would not believe anything was wrong.
+C020,"Unaware, at fault",Attributes belief in the coffee story but calls the failure to check careless.
+C021,Knew,Expressly concludes he would know the package contained something illegal.
+C022,Suspected,Explicitly links requesting payment to assuming a risk.
+C023,"Unaware, no fault",Explicitly denies suspicion or knowledge and describes belief in legitimate contents.
+C024,Suspected,Calls the payment suspicious and suggests 'coffee' might be a code word.
+C025,Act or situation only,Identifies the sender as a random person without interpreting his awareness of the contents.
+C026,Suspected,"Review: The contrast between $1,000 and 'just coffee' implies suspicion; his subjective awareness is not explicit."
+C027,"Unaware, at fault",'Should have known' attributes a failure to recognize what he ought to have recognized.
+C028,"Unaware, at fault",'Too trusting' criticizes his failure to recognize the risk.
+C029,Uncodable,Refers to an unavailable earlier answer without stating the present judgment.
+C030,"Unaware, at fault",Says he should have been aware and had no reason to trust the stranger.
+C031,Knew,"Review: The final sentence implies he was aware of the contents, although the preceding reasoning mentions suspicion."
+C032,Suspected,Explicitly allows that he had some doubt because he was paid.
+C033,"Unaware, at fault",Denies knowledge and calls his trust irresponsible; this contents-state account takes precedence over proof language.
+C034,Suspected,"Attributes having an idea of what he was transporting, based on his request for substantial payment."
+C035,Knew,Explicitly says the circumstances show he knew what was going on.
+C036,Suspected,"Review: 'Believed the risk was very low' still attributes perceived risk, despite also criticizing his care."
+C037,"Unaware, no fault",Says he would not think anything bad was inside because it came from family.
+C038,"Unaware, no fault","Denies knowledge and identifies deception, gift wrapping, and no glaring reason for suspicion."
+C039,Suspected,Review: 'Suspicious' implies concern about the package's contents; the inference is not explicitly attributed to him.
+C040,Act or situation only,"Reports asking his uncle and taking the package, without an answer or a contents-related belief."
+C041,"Unaware, at fault",Says accepting packages from unknown bikers was something he should not have done.
+C042,Act or situation only,"Review: Anticipates questioning about the bag, but does not attribute suspicion that its contents were illicit."
+C043,Knew,Says it is unlikely he accepted the bribe without assuming illicit materials were inside.
+C044,Suspected,Attributes noticing odd wrapping and links payment to the possibility of illicit contents.
+C045,"Unaware, no fault",Trust and no payment explain not recognizing the risk; contents-related unawareness takes precedence over action awareness.
+C046,Knew,Attributes likely knowledge that the package contained something other than the innocent-looking gift.
+C047,Suspected,"Explicitly attributes knowing that there was some risk, rather than knowing the illicit contents."
+C048,Suspected,"The contrast between 'just coffee' and $1,000 implies doubt about the claimed contents."
+C049,Suspected,"Says anyone, including John, would have suspicion in these circumstances."
+C050,"Unaware, at fault","Uses what a reasonable person would recognize, not an assertion that John actually recognized the risk."
+C051,Suspected,Review: Calls the contents-risk obvious and tangible; subjective recognition is implied rather than expressly stated.
+C052,"Unaware, at fault","Says he trusted his uncle and did not anticipate trouble, but should have checked."
+C053,"Unaware, no fault","Review: Uses innocent-looking gift wrapping to excuse the decision, implying reduced reason for suspicion."
+C054,Knew,Review: Mixed account. The writer personally says he knew the drug; the denial is framed as an argument available in law.
+C055,"Unaware, at fault",Explicitly combines unawareness of the contents with criticism of excessive trust.
+C056,"Unaware, no fault","Explains his acceptance through trust in his uncle, without alleging missed warning signs."
+C057,Knew,Explicitly attributes likely knowledge that the material was illicit.
+C058,Knew,Review: 'Might have known' hedges the writer's attribution of knowledge; it does not describe the defendant's own doubt.
+C059,Uncodable,Mentions analyzing personality and intentions but supplies no resulting judgment about the contents.
+C060,Suspected,"'Knew that something was up' implies suspicion of wrongdoing, not definite knowledge of the contents."
+C061,Suspected,"Explicitly says he recognized the possibility of illicit drugs, even if he tried to ignore it."
+C062,Suspected,Attributes possible doubt about coffee without certainty about the actual contents.
+C063,Act or situation only,Gives receipt of money as the reason without stating a belief about the contents.
+C064,"Unaware, at fault",Calls him naive and says warning signs should have registered but did not.
+C065,"Unaware, no fault",Explicitly says he was unaware and relied on a trustworthy uncle's innocent explanation.
+C066,Uncodable,'Idk' supplies no substantive justification.
+C067,Evidentiary,"Addresses inability to prove knowledge, not whether he actually knew or suspected."
+C068,"Unaware, no fault",Review: 'Did not expect this' is read as unawareness of illicit contents; neither the referent nor fault is explicit.
+C069,Suspected,Review: Payment is presented as implying ulterior motives; it does not explicitly say he failed to notice them.
+C070,"Unaware, no fault",Review: Rule 3 says unaware but not which subcode. No failure of care is stated; liability alone does not establish it.
+C071,Knew,Expressly concludes that he most likely knew what was in the package.
+C072,Suspected,Explicitly attributes some thought of illicit contents without full certainty.
+C073,Act or situation only,Reports payment for transporting the bag without interpreting awareness of its contents.
+C074,"Unaware, no fault",Says he assumed his uncle would not involve him in smuggling and did not think the contents were drugs.
+C075,Suspected,Attributes awareness that the coffee explanation was strange despite residual trust in his uncle.
+C076,Uncodable,General criticism of his thinking does not identify a contents-related mental state or a specific missed risk.
+C077,Suspected,Explicitly attributes thinking that something was fishy.
+C078,Act or situation only,"Lists the stranger, payment, and location without specifying what he believed about the contents."
+C079,"Unaware, no fault",Expressly says he had no reason to suspect illegal contents; lack of absolute certainty alone does not establish suspicion.
+C080,Suspected,"Review: Goes beyond denying knowledge to attribute only relative confidence in coffee, implying uncertainty about illicit contents."
+C081,Act or situation only,"Concludes that he was aware of what he was doing, not that he knew or suspected illicit contents."
+C082,Act or situation only,Review: Reports not checking the package but does not state a belief or a duty to check; earlier answers are not inferred.
+C083,Uncodable,'It just makes sense' gives no classifiable reason.
+C084,Act or situation only,"Asking about the contents alone does not establish knowledge, suspicion, or a failure of care."
+C085,"Unaware, no fault",Attributes trust that his uncle would not give him illegal material.
+C086,"Unaware, at fault",Explicitly says he should have been more careful about the contents.
+C087,Suspected,"Attributes some idea that the delivery was not normal, based on payment."
+C088,"Unaware, no fault","Describes him as deceived by the coffee explanation, with no criticism of his care."
+C089,Suspected,Explicitly says he was aware the contents could be illegal and accepted that risk.
+C090,Suspected,Attributes some idea of possible contents; that mental-state account takes precedence over uncertainty about proof.
+C091,Suspected,"Review: Knowing the consequences is read as implied risk awareness, not certain knowledge of illicit contents."
+C092,Act or situation only,"Review: Lists family relationship and no payment without stating trust, lack of suspicion, or a belief about the contents."
+C093,"Unaware, at fault",Criticizes him for being too foolish to recognize the implications of taking a stranger's bag.
+C094,Suspected,Treats the unusually large payment as a reason for suspicion about the package.
+C095,"Unaware, no fault",Rejects knowledge of drugs and invokes family and gift wrapping as reasons.
+C096,"Unaware, no fault",Explains acceptance through natural trust in a family member.
+C097,Uncodable,A question mark supplies no classifiable justification.
+C098,"Unaware, no fault",Explicitly says he trusted his uncle and believed he was transporting coffee.
+C099,Suspected,"Review: Describes assumed innocent contents but also his lack of full certainty; coded as qualified, not bare, unawareness."
+C100,Suspected,Explicitly attributes knowing the risk and accepting it for the reward.

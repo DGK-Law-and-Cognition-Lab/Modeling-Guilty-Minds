@@ -1,0 +1,4 @@
+measure,scope,n_items,kappa,note
+knowledge_stated,60 Knowledge items,60,0.7826,Knew against every other code; registered threshold .60 reached
+awareness_denied,all 100 items,100,0.8344,Either unaware code against every other code; registered threshold .60 reached
+seven_codes,all 100 items,100,0.8,All seven codes; reported without a threshold
