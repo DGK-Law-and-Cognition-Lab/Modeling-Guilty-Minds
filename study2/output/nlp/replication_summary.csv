@@ -1,0 +1,20 @@
+Analysis,Study 1 (published),Study 1 (rerun here),Study 2,Study 2 (probe-defined)
+"RF, features only",.307 ± .035 (κ = .074),.307 ± .035 (κ = .074),.395 ± .028 (κ = .176),.327 ± .021 (κ = .101)
+"RF, belief rating only",.399 ± .035 (κ = .189),.399 ± .035 (κ = .189),.363 ± .029 (κ = .154),.356 ± .037 (κ = .143)
+"RF, features + belief rating",.473 ± .029 (κ = .254),.473 ± .029 (κ = .254),.481 ± .048 (κ = .248),.416 ± .046 (κ = .220)
+"RF, features vs features + belief","t(9) = -11.15, p < .0001","t(9) = -11.15, p < .0001","t(9) = -6.75, p < .0001","t(9) = -5.29, p = .0005"
+"SHAP first (second), Blamelessness",Source .115 (Payment .070),Source .115 (Payment .070),Payment .111 (Source .094),Payment .105 (Source .078)
+"SHAP first (second), Negligence",Payment .057,Payment .057 (Source .047),Payment .078 (Source .030),Payment .061 (Source .025)
+"SHAP first (second), Recklessness",Payment .088,Payment .088 (Source .070),Payment .126 (Source .073),Payment .077 (Source .035)
+"SHAP first (second), Knowledge",Contents .049 (Payment .042),Contents .049 (Payment .042),Payment .063 (Inquiry .037),Payment .089 (Source .025)
+Knowledge: contents vs payment |SHAP|,.049 vs .042,.049 vs .042; contents ahead in 69% of resamples,.033 vs .063; contents ahead in 8% of resamples,.020 vs .089; contents ahead in 0% of resamples
+"Knowledge %, fentanyl vs rare-disease drugs",not reported,10.7% vs 16.7% (-6.0 points),8.8% vs 11.5% (-2.8 points),25.7% vs 24.0% (+1.7 points)
+"Knowledge %, $1,000 vs no payment",not reported,16.0% vs 11.3% (+4.7 points),13.0% vs 7.0% (+6.0 points),33.9% vs 14.9% (+19.1 points)
+"RSA, BGE-large full text",ρ = .077 (pairs p = .0006),ρ = .077 (pairs p = .0006; permutation p = .0046),ρ = .133 (pairs p < .0001; permutation p < .0001),ρ = .109 (pairs p < .0001; permutation p = .0008)
+"RSA, MiniLM full text",ρ = .019 (pairs p = .3949),ρ = .019 (pairs p = .3949; permutation p = .3490),ρ = .024 (pairs p = .2897; permutation p = .2292),ρ = .021 (pairs p = .3380; permutation p = .2783)
+"RSA, BGE-large clauses only",ρ = .129 (pairs p < .0001),ρ = .129 (pairs p < .0001; permutation p = .0002),ρ = .239 (pairs p < .0001; permutation p < .0001),ρ = .193 (pairs p < .0001; permutation p < .0001)
+Text classifier (BGE + logistic regression),.519 ± .037 (κ = .237),.519 ± .037 (κ = .237),.591 ± .036 (κ = .283),.445 ± .041 (κ = .253)
+"Text classifier, balanced class weights",not run,.459 (κ = .260); Knowledge recall .27,.469 (κ = .267); Knowledge recall .30,.432 (κ = .240); Knowledge recall .43
+Features + text vs features only,".531 vs .315; t = 13.99, p < .0001",".531 vs .315; t = 13.99, p < .0001",".602 vs .387; t = 12.18, p < .0001",not run
+Features + text vs features + belief,".531 vs .470; t = 3.83, p = .0040",".531 vs .470; t = 3.83, p = .0040",".602 vs .466; t = 7.55, p < .0001",not run
+"BERTopic topics, BGE / MiniLM",3 / 23,not run,2 / 27,same topics as Study 2

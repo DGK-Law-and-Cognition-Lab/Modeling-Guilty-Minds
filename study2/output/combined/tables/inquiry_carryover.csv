@@ -1,0 +1,9 @@
+Study,Model,b,z,p,p (Holm within S6),Trials (non-inquiry; inquiry)
+Study 1,Recklessness on non-inquiry trials (logistic),0.05089541670464537,0.2645278010767966,= .791,= 1.000,524; 536
+Study 1,Culpability on non-inquiry trials (ordinal),0.06574572366117276,0.4195839510346939,= .675,= 1.000,524; 536
+Study 1,"Culpability on non-inquiry trials, with belief rating (ordinal)",0.12260175853814044,0.7636820870087557,= .445,= 1.000,524; 536
+Study 1,Placebo: culpability on inquiry trials (ordinal),-0.21473627620361307,-1.6542238050285965,= .098,= .392,524; 536
+Study 2,Recklessness on non-inquiry trials (logistic),0.15065522914940105,0.9539563037782638,= .340,= .502,657; 653
+Study 2,Culpability on non-inquiry trials (ordinal),0.22626811366058364,1.650140218627395,= .099,= .332,657; 653
+Study 2,"Culpability on non-inquiry trials, with belief rating (ordinal)",0.17115833384652415,1.1476449526483665,= .251,= .502,657; 653
+Study 2,Placebo: culpability on inquiry trials (ordinal),0.23391705032912244,1.7336793433073603,= .083,= .332,657; 653

@@ -1,0 +1,28 @@
+Topic,Keywords,n,Most frequent choice (%),Most frequent code (%)
+0,package,161,Negligence (47),"Unaware, at fault (42)"
+1,"coffee, told",137,Negligence (56),"Unaware, no fault (31)"
+2,david,83,Recklessness (39),"Unaware, at fault (36)"
+3,"biker, know, random",66,Negligence (47),"Unaware, at fault (41)"
+4,"coffee, robert, andrew, told",58,Negligence (41),"Unaware, no fault (43)"
+5,"daniel, package",56,Negligence (62),"Unaware, at fault (43)"
+6,robert,49,Negligence (51),"Unaware, at fault (43)"
+7,"uncle, trusted, family, relative",47,Negligence (55),"Unaware, no fault (62)"
+8,"john, package",46,Negligence (57),"Unaware, at fault (46)"
+9,"bag, checked",44,Negligence (57),"Unaware, at fault (70)"
+10,"andrew, package, uncle",34,Negligence (59),"Unaware, at fault (44)"
+11,"drugs, drug, knew, don, think",32,Negligence (53),"Unaware, at fault (28)"
+12,"daniel, coffee",29,Negligence (48),"Unaware, at fault (38)"
+13,"money, financially, gain, compensation, payment",27,Recklessness (33),Act or situation only (33)
+14,"fentanyl, contained, failure, coffee",26,Blamelessness (46),"Unaware, no fault (50)"
+15,"john, coffee, contained, told, material",26,Recklessness (38),"Unaware, no fault (38)"
+16,"biker, coffee, andrew, border, across",23,Negligence (65),"Unaware, at fault (43)"
+17,"based, judgment, scenario, information",19,Negligence (42),Uncodable (89)
+18,"checked, check, should, checking, content",19,Recklessness (47),"Unaware, at fault (79)"
+19,"1000, illicit, knew, context, something",19,Negligence (37),Suspected (37)
+20,"bag, duffel, amount, 1000, across",18,Recklessness (67),Suspected (56)
+21,"know, aware, should, knew",18,Negligence (67),"Unaware, at fault (39)"
+22,"andrew, trusted, true, enough, easily",18,Negligence (78),"Unaware, at fault (39)"
+23,"stranger, should, especially, trusted",15,Negligence (67),"Unaware, at fault (53)"
+24,"doing, wrong, friend, capacity, favor",13,Negligence (62),"Unaware, no fault (62)"
+25,"drugs, family, your, uncle, smart",12,Negligence (75),"Unaware, no fault (58)"
+26,"red, flag, flags, obvious, offered",11,Recklessness (73),Suspected (64)

@@ -1,0 +1,23 @@
+step,n
+Prolific submissions in the export,337
+Prolific IDs with at least one session file,297
+  Closed the page before answering the consent question,1
+  Declined consent,1
+  Left at the eligibility question,1
+  Screened out (answered No to the eligibility question),3
+  Left before the first case,5
+  Left during the five cases,13
+"  Left during the ranking, comprehension item or probe",2
+  Completed the study,271
+Full sample (primary): everyone who completed,271
+  failed the attention item,8
+"  chose ""I did not take it seriously""",1
+  finished in under 4.35 minutes,0
+  excluded for any reason,9
+  analysed,262
+Robustness sample: the first 200 to complete,200
+  failed the attention item,7
+"  chose ""I did not take it seriously""",0
+  finished in under 4.35 minutes,0
+  excluded for any reason,7
+  analysed,193

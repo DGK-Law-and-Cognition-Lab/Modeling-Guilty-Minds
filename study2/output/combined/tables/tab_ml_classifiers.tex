@@ -1,0 +1,31 @@
+\begin{table}[H]
+\centering
+\caption{Classification of the four categories from vignette features, belief ratings and justification text}
+\label{tab:ml_classifiers}
+\footnotesize
+\begin{tabular}{p{4.4cm}ccc}
+\toprule
+Model & Study 1 & Study 2 & Study 2, probe-defined \\
+\midrule
+\addlinespace
+\multicolumn{4}{l}{\textit{Random forest, 10-fold cross-validation}} \tabularnewline
+\raggedright Six vignette features & .307 $\pm$ .035 (.074) & .395 $\pm$ .028 (.176) & .327 $\pm$ .021 (.101) \tabularnewline
+\raggedright Belief rating alone & .399 $\pm$ .035 (.189) & .363 $\pm$ .029 (.154) & .356 $\pm$ .037 (.143) \tabularnewline
+\raggedright Features and belief rating & .473 $\pm$ .029 (.254) & .481 $\pm$ .048 (.248) & .416 $\pm$ .046 (.220) \tabularnewline
+\raggedright Features and belief rating vs. features & \textit{t}(9) = 11.15, \textit{p} $<$ .001 & \textit{t}(9) = 6.75, \textit{p} $<$ .001 & \textit{t}(9) = 5.29, \textit{p} $<$ .001 \tabularnewline
+\raggedright Accuracy of always choosing the most frequent category & .426 & .491 & .281 \tabularnewline
+\addlinespace
+\multicolumn{4}{l}{\textit{Justification text (BGE-large embeddings)}} \tabularnewline
+\raggedright Logistic regression on the text & .519 $\pm$ .037 (.237) & .591 $\pm$ .036 (.283) & .445 $\pm$ .041 (.253) \tabularnewline
+\raggedright Random forest, features and text & .531 $\pm$ .042 (.277) & .602 $\pm$ .038 (.319) &  \tabularnewline
+\raggedright Features and text vs. features & \textit{t}(9) = 13.99, \textit{p} $<$ .001 & \textit{t}(9) = 12.18, \textit{p} $<$ .001 &  \tabularnewline
+\raggedright Features and text vs. features and belief rating & \textit{t}(9) = 3.83, \textit{p} = .004 & \textit{t}(9) = 7.55, \textit{p} $<$ .001 &  \tabularnewline
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\begin{flushleft}
+\footnotesize
+\textit{Note.} Cells give mean accuracy $\pm$ \textit{SD} across the 10 folds, with Cohen's $\kappa$ in parentheses. Random forests: 500 trees, at least five trials per leaf, balanced class weights; the folds are compared with paired \textit{t} tests, shown as absolute values. In every comparison of a model with its extension, the extension was the more accurate. The belief rating alone was more accurate than the six features in Study 1 (\textit{t}(9) = 5.86, \textit{p} $<$ .001) but less accurate in Study 2 (\textit{t}(9) = 3.17, \textit{p} = .011). The text models use the trials with a justification of more than five characters (1,044 in Study 1, 1,307 in Study 2). Study 1 values reproduce the published Study 1 values. The probe-defined outcome is the highest state affirmed on the three element questions. None of these analyses was registered for Study 2.
+\end{flushleft}
+\end{table}

@@ -1,0 +1,73 @@
+Outcome,Feature,Category,Mean |SHAP|
+Study 1,Source (biker),Blamelessness,0.11459241969215717
+Study 1,Package (duffel),Blamelessness,0.04121976562217023
+Study 1,Inquiry (told),Blamelessness,0.021657184273891118
+Study 1,Payment ($1000),Blamelessness,0.06968787455005558
+Study 1,Location (Mexico),Blamelessness,0.02061703627717769
+Study 1,Contents (fentanyl),Blamelessness,0.03352175083720948
+Study 1,Source (biker),Negligence,0.04662960208835536
+Study 1,Package (duffel),Negligence,0.01561544387107515
+Study 1,Inquiry (told),Negligence,0.0339047569447605
+Study 1,Payment ($1000),Negligence,0.057124254316772385
+Study 1,Location (Mexico),Negligence,0.016436514636768797
+Study 1,Contents (fentanyl),Negligence,0.023820920990165556
+Study 1,Source (biker),Recklessness,0.06976552089338667
+Study 1,Package (duffel),Recklessness,0.03334233839434293
+Study 1,Inquiry (told),Recklessness,0.01631711877594867
+Study 1,Payment ($1000),Recklessness,0.08760998938264318
+Study 1,Location (Mexico),Recklessness,0.014830740424245556
+Study 1,Contents (fentanyl),Recklessness,0.02663782706022309
+Study 1,Source (biker),Knowledge,0.021122790088522737
+Study 1,Package (duffel),Knowledge,0.013909681127888315
+Study 1,Inquiry (told),Knowledge,0.029748622077220083
+Study 1,Payment ($1000),Knowledge,0.041965919699381
+Study 1,Location (Mexico),Knowledge,0.021207259528230722
+Study 1,Contents (fentanyl),Knowledge,0.04938693546476075
+Study 2,Source (biker),Blamelessness,0.09389890729729367
+Study 2,Package (duffel),Blamelessness,0.03345416426223459
+Study 2,Inquiry (told),Blamelessness,0.020487934290571313
+Study 2,Payment ($1000),Blamelessness,0.11069334987016341
+Study 2,Location (Mexico),Blamelessness,0.022344261000082875
+Study 2,Contents (fentanyl),Blamelessness,0.025335805530408012
+Study 2,Source (biker),Negligence,0.030082483790839026
+Study 2,Package (duffel),Negligence,0.021936217883210728
+Study 2,Inquiry (told),Negligence,0.016409282282438833
+Study 2,Payment ($1000),Negligence,0.0780229905003823
+Study 2,Location (Mexico),Negligence,0.013631486307189723
+Study 2,Contents (fentanyl),Negligence,0.020562270638225227
+Study 2,Source (biker),Recklessness,0.07293063580496156
+Study 2,Package (duffel),Recklessness,0.026627505568238268
+Study 2,Inquiry (told),Recklessness,0.020681169998530487
+Study 2,Payment ($1000),Recklessness,0.1260072036423942
+Study 2,Location (Mexico),Recklessness,0.022314427504507166
+Study 2,Contents (fentanyl),Recklessness,0.024188973697443463
+Study 2,Source (biker),Knowledge,0.025396147583308333
+Study 2,Package (duffel),Knowledge,0.02385629906772923
+Study 2,Inquiry (told),Knowledge,0.037150764405542346
+Study 2,Payment ($1000),Knowledge,0.06270913672815107
+Study 2,Location (Mexico),Knowledge,0.024335013256338002
+Study 2,Contents (fentanyl),Knowledge,0.03277741608466693
+Study 2 probe-defined,Source (biker),Blamelessness,0.0783456266715638
+Study 2 probe-defined,Package (duffel),Blamelessness,0.024745408949489366
+Study 2 probe-defined,Inquiry (told),Blamelessness,0.015150385079383138
+Study 2 probe-defined,Payment ($1000),Blamelessness,0.10507610669710699
+Study 2 probe-defined,Location (Mexico),Blamelessness,0.02037473189733873
+Study 2 probe-defined,Contents (fentanyl),Blamelessness,0.01847140618559906
+Study 2 probe-defined,Source (biker),Negligence,0.0249152094803477
+Study 2 probe-defined,Package (duffel),Negligence,0.0181570089985962
+Study 2 probe-defined,Inquiry (told),Negligence,0.01689389489525002
+Study 2 probe-defined,Payment ($1000),Negligence,0.06149143497695855
+Study 2 probe-defined,Location (Mexico),Negligence,0.020512163948963158
+Study 2 probe-defined,Contents (fentanyl),Negligence,0.017405215658183943
+Study 2 probe-defined,Source (biker),Recklessness,0.034695584931272526
+Study 2 probe-defined,Package (duffel),Recklessness,0.01758569154016936
+Study 2 probe-defined,Inquiry (told),Recklessness,0.019721071838522394
+Study 2 probe-defined,Payment ($1000),Recklessness,0.0770235318283074
+Study 2 probe-defined,Location (Mexico),Recklessness,0.028421958241943407
+Study 2 probe-defined,Contents (fentanyl),Recklessness,0.019063872998968272
+Study 2 probe-defined,Source (biker),Knowledge,0.024908180264666197
+Study 2 probe-defined,Package (duffel),Knowledge,0.01880729955268636
+Study 2 probe-defined,Inquiry (told),Knowledge,0.020945363813622386
+Study 2 probe-defined,Payment ($1000),Knowledge,0.08907573287232282
+Study 2 probe-defined,Location (Mexico),Knowledge,0.015497234735034674
+Study 2 probe-defined,Contents (fentanyl),Knowledge,0.020293076435397732

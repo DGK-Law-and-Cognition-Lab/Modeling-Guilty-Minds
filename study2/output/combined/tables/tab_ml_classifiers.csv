@@ -1,0 +1,12 @@
+Model,Study 1,Study 2,"Study 2, probe-defined"
+"## Random forest, 10-fold cross-validation",,,
+Six vignette features,.307 ± .035 (.074),.395 ± .028 (.176),.327 ± .021 (.101)
+Belief rating alone,.399 ± .035 (.189),.363 ± .029 (.154),.356 ± .037 (.143)
+Features and belief rating,.473 ± .029 (.254),.481 ± .048 (.248),.416 ± .046 (.220)
+Features and belief rating vs. features,"t(9) = 11.15, p < .001","t(9) = 6.75, p < .001","t(9) = 5.29, p < .001"
+Accuracy of always choosing the most frequent category,.426,.491,.281
+## Justification text (BGE-large embeddings),,,
+Logistic regression on the text,.519 ± .037 (.237),.591 ± .036 (.283),.445 ± .041 (.253)
+"Random forest, features and text",.531 ± .042 (.277),.602 ± .038 (.319),
+Features and text vs. features,"t(9) = 13.99, p < .001","t(9) = 12.18, p < .001",
+Features and text vs. features and belief rating,"t(9) = 3.83, p = .004","t(9) = 7.55, p < .001",

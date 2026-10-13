@@ -1,0 +1,16 @@
+Result,Study 1,Study 2,Replicated
+## Distribution of choices (R1),,,
+"Blamelessness / Negligence / Recklessness / Knowledge, %",16.7 / 42.6 / 27.0 / 13.7,12.1 / 49.1 / 28.7 / 10.2,
+Cohen's w against a uniform distribution,0.45,0.63,Yes
+## Belief rating and culpability (R2),,,
+Odds ratio per 10 rating points [95% CI],"1.58 [1.49, 1.68]","1.54 [1.46, 1.63]",Yes
+"## Vignette features, odds ratio [95% CI] (R3)",,,
+"Payment of $1,000 (vs. none)","2.96 [2.30, 3.81]","5.85 [4.53, 7.55]",Yes
+Biker (vs. uncle) as the source,"1.98 [1.55, 2.53]","2.18 [1.73, 2.74]",
+## Awareness-denying justifications (R4),,,
+"Knowledge vs. Recklessness choices, % denying",39.6 vs. 35.8,40.8 vs. 33.6,No
+Odds ratio [95% CI],"1.62 [0.90, 2.90]","1.33 [0.69, 2.57]",
+"## Knowledge minus Recklessness choices, belief rating (R5)",,,
+"All trials, points [95% CI]","−6.96 [−11.42, −2.49]","−2.14 [−6.91, 2.63]",
+"Awareness-denying justifications set aside, points [95% CI]","0.25 [−4.47, 4.98]","−0.22 [−5.73, 5.29]",
+"Knowledge choices with a belief rating below 50, % [95% CI]","41.4 [32.1, 50.7]","36.1 [25.0, 46.9]",

@@ -1,0 +1,21 @@
+\begin{table}[H]
+\centering
+\caption{Representational similarity analysis}
+\label{tab:ml_rsa}
+\footnotesize
+\begin{tabular}{lccc}
+\toprule
+Embedding & Study 1 & Study 2 & Study 2, probe-defined \\
+\midrule
+BGE-large, full text & .077 ($<$ .001; .005) & .133 ($<$ .001; $<$ .001) & .109 ($<$ .001; $<$ .001) \tabularnewline
+MiniLM, full text & .019 (.395; .349) & .024 (.290; .229) & .021 (.338; .278) \tabularnewline
+BGE-large, varying clauses only & .129 ($<$ .001; $<$ .001) & .239 ($<$ .001; $<$ .001) & .193 ($<$ .001; $<$ .001) \tabularnewline
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\begin{flushleft}
+\footnotesize
+\textit{Note.} Spearman correlation between the cosine distance of two vignettes' embeddings and the absolute difference in their mean culpability (1 to 4), across the 2,016 pairs of the 64 vignettes. In parentheses: the \textit{p} value that treats pairs as independent (as published for Study 1), then a permutation \textit{p} value from 10,000 shuffles of the vignette means, which treats vignettes as the units. The vignette means of the two studies correlated \textit{r} = .71. Not registered for Study 2.
+\end{flushleft}
+\end{table}

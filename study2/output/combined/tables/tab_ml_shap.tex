@@ -1,0 +1,29 @@
+\begin{table}[H]
+\centering
+\caption{Feature importance by category and its stability}
+\label{tab:ml_shap}
+\footnotesize
+\begin{tabular}{p{5.2cm}ccc}
+\toprule
+Category & Study 1 & Study 2 & Study 2, probe-defined \\
+\midrule
+\addlinespace
+\multicolumn{4}{l}{\textit{Most important feature (mean $|$SHAP$|$; \% of bootstrap resamples in which it ranks first)}} \tabularnewline
+\raggedright Blamelessness & Source .115 (98\%) & Payment .111 (74\%) & Payment .105 (94\%) \tabularnewline
+\raggedright Negligence & Payment .057 (72\%) & Payment .078 (99\%) & Payment .061 (98\%) \tabularnewline
+\raggedright Recklessness & Payment .088 (82\%) & Payment .126 (99\%) & Payment .077 (98\%) \tabularnewline
+\raggedright Knowledge & Contents .049 (66\%) & Payment .063 (82\%) & Payment .089 (100\%) \tabularnewline
+\addlinespace
+\multicolumn{4}{l}{\textit{Knowledge: contents against payment}} \tabularnewline
+\raggedright Mean $|$SHAP$|$, contents vs. payment (\% of resamples with contents ahead) & .049 vs. .042 (69\%) & .033 vs. .063 (8\%) & .020 vs. .089 (0\%) \tabularnewline
+\raggedright Knowledge, \% of trials: fentanyl vs. rare-disease drugs & 10.7 vs. 16.7 & 8.8 vs. 11.5 & 25.7 vs. 24.0 \tabularnewline
+\raggedright Knowledge, \% of trials: \$1,000 vs. no payment & 16.0 vs. 11.3 & 13.0 vs. 7.0 & 33.9 vs. 14.9 \tabularnewline
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\begin{flushleft}
+\footnotesize
+\textit{Note.} SHAP values from a random forest of the six vignette features fitted to all trials (TreeExplainer). Mean $|$SHAP$|$ measures how much a feature moves the predicted probability of a category but not in which direction; the last two rows give the direction. Stability: a participant bootstrap (200 resamples, each person's five trials kept together) refitted the forest and recomputed the importances. The Study 1 values reproduce the published Study 1 values. Not registered for Study 2.
+\end{flushleft}
+\end{table}

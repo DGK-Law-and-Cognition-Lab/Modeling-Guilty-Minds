@@ -1,0 +1,54 @@
+
+Participant flow
+ step                                                     n  
+ Prolific submissions in the export                       337
+ Prolific IDs with at least one session file              297
+   Closed the page before answering the consent question    1
+   Declined consent                                         1
+   Left at the eligibility question                         1
+   Screened out (answered No to the eligibility question)   3
+   Left before the first case                               5
+   Left during the five cases                              13
+   Left during the ranking, comprehension item or probe     2
+   Completed the study                                    271
+ Full sample (primary): everyone who completed            271
+   failed the attention item                                8
+   chose "I did not take it seriously"                      1
+   finished in under 4.35 minutes                           0
+   excluded for any reason                                  9
+   analysed                                               262
+ Robustness sample: the first 200 to complete             200
+   failed the attention item                                7
+   chose "I did not take it seriously"                      0
+   finished in under 4.35 minutes                           0
+   excluded for any reason                                  7
+   analysed                                               193
+
+Speed rule: the first 40 completers' median length was 13.05 minutes, so the threshold is 4.35 minutes.
+Session length for everyone who completed: median 16.0 minutes on the experiment's clock; Prolific's median time taken was 16.7 minutes.
+
+Prolific status of the people who completed the study
+ prolific_status   n
+ AWAITING REVIEW 251
+        RETURNED   1
+    SCREENED OUT   1
+       TIMED-OUT  18
+Prolific follow-up list: 20 people (see data/processed/prolific_followup.csv)
+       what_happened prolific_status  n
+ Completed the study        RETURNED  1
+ Completed the study    SCREENED OUT  1
+ Completed the study       TIMED-OUT 18
+
+Repeated Prolific IDs
+  Session files: 302; Prolific IDs: 297; IDs with more than one file: 5
+  Later complete sessions dropped by the duplicate rule: 0
+  Completers whose kept session followed an earlier, unfinished one: 2 (cases seen before: 0, 0)
+  Completers who answered No to the eligibility question in another session: 2 (in the first 200: 0)
+
+Order of completion
+  For the 251 people who submitted their completion code, Prolific recorded the submission a median of 28 seconds after the estimated end (middle 90%: 15 to 91 seconds).
+  Ordering by Prolific's submission time where it exists changes the first 200 by 0 people.
+  The 200th and the next completion are 0.1 minutes apart; 19 other completions fall within 5 minutes of the 200th.
+  Completions ran from Oct 07 01:07 to Oct 07 22:19 UTC; the first 200 ended by Oct 07 20:53 UTC.
+
+Done. This script read no category choice, slider rating, justification, probe answer or comprehension answer.

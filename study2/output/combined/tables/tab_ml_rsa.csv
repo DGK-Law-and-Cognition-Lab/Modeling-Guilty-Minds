@@ -1,0 +1,4 @@
+Embedding,Study 1,Study 2,"Study 2, probe-defined"
+"BGE-large, full text",.077 (< .001; .005),.133 (< .001; < .001),.109 (< .001; < .001)
+"MiniLM, full text",.019 (.395; .349),.024 (.290; .229),.021 (.338; .278)
+"BGE-large, varying clauses only",.129 (< .001; < .001),.239 (< .001; < .001),.193 (< .001; < .001)

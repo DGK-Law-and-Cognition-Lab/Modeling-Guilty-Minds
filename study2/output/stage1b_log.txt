@@ -1,0 +1,19 @@
+
+People in the full sample (primary): 262; among the first 200 completions: 193
+Trials written: 1310 (first 200: 965)
+
+Checks
+  Five cases per person, in positions 1 to 5                                  pass
+  Five different vignettes per person                                         pass
+  Five different names and towns per person                                   pass
+  Names are the five used in the study                                        pass
+  Scenario number on the page equals the position                             pass
+  Same vignette ID on the choice, slider, justification and probe pages       pass
+  Town's country matches the location feature                                 pass
+  Text shown matches the vignette file for every case                         pass
+  No missing responses in the trial table                                     pass
+  Five Raven's items per person                                               pass
+  Recorded vignette order matches the cases shown                             pass
+  Every participant has demographics, comprehension and ranking rows          pass
+
+Done. Nothing above summarises a response.

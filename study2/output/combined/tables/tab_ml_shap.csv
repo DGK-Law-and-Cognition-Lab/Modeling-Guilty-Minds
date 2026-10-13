@@ -1,0 +1,10 @@
+Category,Study 1,Study 2,"Study 2, probe-defined"
+## Most important feature (mean |SHAP|; % of bootstrap resamples in which it ranks first),,,
+Blamelessness,Source .115 (98%),Payment .111 (74%),Payment .105 (94%)
+Negligence,Payment .057 (72%),Payment .078 (99%),Payment .061 (98%)
+Recklessness,Payment .088 (82%),Payment .126 (99%),Payment .077 (98%)
+Knowledge,Contents .049 (66%),Payment .063 (82%),Payment .089 (100%)
+## Knowledge: contents against payment,,,
+"Mean |SHAP|, contents vs. payment (% of resamples with contents ahead)",.049 vs. .042 (69%),.033 vs. .063 (8%),.020 vs. .089 (0%)
+"Knowledge, % of trials: fentanyl vs. rare-disease drugs",10.7 vs. 16.7,8.8 vs. 11.5,25.7 vs. 24.0
+"Knowledge, % of trials: $1,000 vs. no payment",16.0 vs. 11.3,13.0 vs. 7.0,33.9 vs. 14.9

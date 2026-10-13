@@ -1,0 +1,18 @@
+Python: 3.13.15
+NumPy: 2.1.3
+Pandas: 2.2.3
+Scikit-learn: 1.6.1
+SHAP: 0.51.0
+Sentence-Transformers: 5.3.0
+UMAP: 0.5.11
+BERTopic: 0.17.4
+HDBSCAN: 0.8.44
+Torch: 2.11.0+cu130
+Transformers: 5.18.0
+GPU: Tesla T4
+BGE model: BAAI/bge-large-en-v1.5 @ d4aa6901d3a41ba39fb536a557fa166f842b0e09
+MiniLM model: sentence-transformers/all-MiniLM-L6-v2 @ c9745ed1d9f207416be6d2e6f8de32d1f16199bf
+Seed: 2026
+Sample: full
+Bootstrap resamples: 200
+Permutations: 10000
